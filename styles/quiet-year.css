@@ -34,8 +34,12 @@
 .qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .qyc-columns label { display: flex; flex-direction: column; gap: 4px; }
 .qyc-columns textarea { resize: vertical; min-height: 70px; }
-.qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px; gap: 5px; align-items: center; margin-bottom: 5px; }
+/* The trailing column holds the GM's remove button and collapses to nothing on
+   a player's client, where the row is not editable. */
+.qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px auto; gap: 5px; align-items: center; margin-bottom: 5px; }
 .qyc-contempt-count { text-align: center; font-size: 1.2em; font-weight: 800; }
+.qyc-contempt .qyc-muted { margin: 0 0 8px; }
+.qyc-contempt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
 .qyc-footer { display: flex; flex-direction: column; gap: 6px; }
 .quiet-year-chat-card h2 { margin-bottom: 6px; }
 

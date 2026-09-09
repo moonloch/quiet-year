@@ -22,8 +22,10 @@ All created documents are tagged with the module flag `quiet-year` so the instal
 1. Copy the entire `quiet-year` folder into your Foundry user-data `Data/modules/` directory.
 2. Restart Foundry.
 3. Open the existing Starforged world.
-4. Enable **Quiet Year — Cobalt Reach Kit** under Manage Modules.
+4. Enable **Quiet Year — Cobalt Reach Kit** under Manage Modules, along with **socketlib**, which it depends on. socketlib is what lets a player take and discard their own Contempt: world settings are GM-write-only, so a player's click is relayed to a GM client.
 5. As GM, accept the one-time prompt to install the kit.
+
+Note that the module declares `"socket": true`, which Foundry reads when the **world is launched**. If you add or update this module while a world is running, relaunch the world — reloading the browser is not enough, and Contempt will stay GM-operated until you do.
 
 If you dismiss the prompt, run the macro **Quiet Year: Install / Repair Kit**.
 

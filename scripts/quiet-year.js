@@ -204,6 +204,10 @@ function freshState() {
     abundances: [],
     scarcities: [],
     projects: [],
+    // Seeded without ids on purpose: a fresh state is rebuilt on every read, so
+    // random ids here would differ between the render that drew a row and the
+    // click that acts on it. Rows fall back to their position until the first
+    // write stamps real ids on them — see contemptId().
     contempt: [
       { name: "Player 1", count: 0 },
       { name: "Player 2", count: 0 }
@@ -219,6 +223,38 @@ function getState() {
 async function setState(state) {
   await game.settings.set(MODULE_ID, "state", state);
   refreshPlaySurface();
+}
+
+// Every action here reads the state, changes it and writes it back, and the
+// window between the read and the write is wide — drawWeek() updates cards
+// inside it. A player's relayed Contempt click lands on a GM client at a moment
+// nobody controls, so those windows really do overlap now; on the client where
+// both run, this queue keeps one from discarding the other's change.
+//
+// It is per client, so it does not order writes between two connected GMs —
+// socketlib relays to one of them, and that GM may be mid-action on another.
+// Two GMs driving the tracker at once was already a race before this, and
+// closing it properly would need a lock held across clients.
+let trackerWrites = Promise.resolve();
+
+function queueTrackerWrite(task) {
+  const result = trackerWrites.then(task, task);
+  // The chain must not stay rejected or every later write would be handed the
+  // old failure; callers see it through `result` instead.
+  trackerWrites = result.catch(() => {});
+  return result;
+}
+
+// Wraps an action so its whole read-modify-write takes a turn in the queue.
+function serialized(action) {
+  return (...args) => queueTrackerWrite(() => action(...args));
+}
+
+// Click handlers are fire-and-forget, so a failed write would otherwise be an
+// unhandled rejection and a button that looks inert.
+function reportTrackerFailure(err) {
+  console.error(`${MODULE_ID} |`, err);
+  ui.notifications.error("The Quiet Year tracker could not be updated — see the console.");
 }
 
 // A project is "active" until it either runs its die out (or is finished early)
@@ -241,6 +277,44 @@ function projectStatus(project) {
 
 function activeProjects(state) {
   return (state.projects || []).filter(p => projectStatus(p) === "active");
+}
+
+// Contempt rows are addressed by a stable id, because array position stops
+// meaning anything once rows can be added and removed. Games saved before ids
+// existed — and the seeded default — carry none, so a row falls back to its
+// position; every write stamps real ids, so the fallback lasts exactly until
+// the first one.
+function contemptId(entry, index) {
+  return entry?.id || `row-${index}`;
+}
+
+function contemptIndex(state, id) {
+  const rows = state.contempt || [];
+  const found = rows.findIndex((entry, i) => contemptId(entry, i) === id);
+  if (found >= 0) return found;
+  // The click carries whatever id the row had when it was drawn, and the write
+  // that stamped real ids may have landed since — renders trail state by the
+  // 100ms debounce. A position-derived id still says which row was meant.
+  const position = /^row-(\d+)$/.exec(id);
+  const index = position ? Number(position[1]) : -1;
+  return index < rows.length ? index : -1;
+}
+
+// Must run *after* the lookup that matched a position-derived id, or it would
+// rename the very row that was being looked for.
+function stampContemptIds(state) {
+  for (const entry of state.contempt || []) if (!entry.id) entry.id = foundry.utils.randomID();
+  return state;
+}
+
+// Runs once per world on the GM's client, so a game carried over from before
+// ids existed settles on real ones before anything is rendered. Without it the
+// first write of the session would change every row's identity underneath a
+// surface that had already drawn them.
+async function migrateContemptIds() {
+  const state = getState();
+  if (!(state.contempt || []).some(entry => !entry.id)) return;
+  await setState(stampContemptIds(state));
 }
 
 // Foundry broadcasts world settings and card updates to every client, but only
@@ -313,7 +387,7 @@ async function markRandomCardsDrawn(deck, count) {
   return chosen;
 }
 
-async function drawWeek() {
+const drawWeek = serialized(async function drawWeek() {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the Quiet Year week deck.");
   let state = getState();
   if (state.gameOver) return ui.notifications.warn("The Quiet Year has ended. Reset the year to begin again.");
@@ -382,7 +456,7 @@ async function drawWeek() {
       buttons: { ok: { label: "So it ends." } }
     }).render(true);
   }
-}
+});
 
 // Project outcomes are beats worth the same permanent record as the drawn card,
 // and a notification only reaches the GM who happened to click.
@@ -393,7 +467,7 @@ async function announceProjects(heading, names) {
   });
 }
 
-async function tickProjects() {
+const tickProjects = serialized(async function tickProjects() {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const state = getState();
   const completed = [];
@@ -414,13 +488,13 @@ async function tickProjects() {
   if (!completed.length) return;
   ui.notifications.info(`Project${completed.length > 1 ? "s" : ""} complete: ${completed.join(", ")}`);
   await announceProjects(`Project${completed.length > 1 ? "s" : ""} complete`, completed);
-}
+});
 
 // The cards call for both of these constantly — "a project finishes early", "a
 // project fails" — and neither is Tick Projects, which moves every die at once.
 // A failed project is not a deleted one either: it stays on the surface as part
 // of the community's history.
-async function setProjectStatus(id, status) {
+const setProjectStatus = serialized(async function setProjectStatus(id, status) {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const state = getState();
   const project = (state.projects || []).find(p => p.id === id);
@@ -437,6 +511,84 @@ async function setProjectStatus(id, status) {
   await setState(state);
 
   await announceProjects(status === "completed" ? "Project finished early" : "Project failed", [project.name]);
+});
+
+// Contempt is the one tracker a player has to be able to work themselves. The
+// rules make it their own move — taken instead of interrupting someone's turn —
+// so making them interrupt and ask the GM to click for them defeats the point.
+// World-scoped settings are GM-write-only, so a non-GM click is relayed to a GM
+// client through socketlib, which performs the write there.
+//
+// Any player may adjust any row. The rows are a shared table-facing signal and
+// this is a trust-based game; tying each row to a `game.users` entry was the
+// alternative and buys permission checks nobody at this table needs.
+let contemptSocket = null;
+
+Hooks.once("socketlib.ready", () => {
+  // Returns undefined — having logged its own reason — when the manifest
+  // Foundry read at world launch did not carry `"socket": true`.
+  contemptSocket = socketlib.registerModule(MODULE_ID) ?? null;
+  if (!contemptSocket) return console.warn(`${MODULE_ID} | No socketlib socket: Contempt stays GM-operated. Relaunch the world so Foundry re-reads this module's manifest.`);
+  contemptSocket.register("applyContemptAdjustment", applyContemptAdjustment);
+});
+
+// Runs on a GM client, either because a GM clicked or because socketlib relayed
+// a player's click here. Returns whether the write happened, so the client that
+// clicked is the one that reports a failure — a notification raised here would
+// otherwise pop up on the GM's screen for something a player did.
+async function applyContemptAdjustment(id, delta) {
+  if (!game.user.isGM) return false;
+  // The trust boundary for relayed input, so it admits exactly what the buttons
+  // send: one token either way. Anything else — a fraction, a huge number, a
+  // NaN that would serialize to null and zero the row — is refused.
+  if (delta !== 1 && delta !== -1) return false;
+  return queueTrackerWrite(async () => {
+    const state = getState();
+    const index = contemptIndex(state, id);
+    if (index < 0) return false;
+    const entry = state.contempt[index];
+    entry.count = Math.max(0, Number(entry.count || 0) + delta);
+    stampContemptIds(state);
+    await setState(state);
+    return true;
+  });
+}
+
+async function adjustContempt(id, delta) {
+  let applied;
+  if (game.user.isGM) applied = await applyContemptAdjustment(id, Number(delta));
+  else {
+    // socketlib is a declared dependency, so a miss here means it was switched
+    // off after the fact rather than a route players normally meet.
+    if (!contemptSocket) return ui.notifications.warn("Adjusting Contempt yourself needs the socketlib module enabled.");
+    if (!game.users.some(u => u.isGM && u.active)) return ui.notifications.warn("A GM must be connected before Contempt can be adjusted.");
+    applied = await contemptSocket.executeAsGM("applyContemptAdjustment", id, Number(delta));
+  }
+  if (!applied) ui.notifications.warn("That Contempt row could not be adjusted — it may no longer be on the tracker.");
+}
+
+async function addContemptRow() {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the player roster.");
+  return queueTrackerWrite(async () => {
+    const state = stampContemptIds(getState());
+    // Counting rows would reissue a name after a removal, leaving two rows the
+    // same on a tracker whose whole job is telling players apart.
+    const highest = state.contempt.reduce((n, entry) => Math.max(n, Number(/^Player (\d+)$/.exec(entry.name || "")?.[1]) || 0), 0);
+    state.contempt.push({ id: foundry.utils.randomID(), name: `Player ${Math.max(highest + 1, state.contempt.length + 1)}`, count: 0 });
+    await setState(state);
+  });
+}
+
+async function removeContemptRow(id) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the player roster.");
+  return queueTrackerWrite(async () => {
+    const state = getState();
+    const index = contemptIndex(state, id);
+    if (index < 0) return ui.notifications.warn("That Contempt row is no longer on the tracker.");
+    state.contempt.splice(index, 1);
+    stampContemptIds(state);
+    await setState(state);
+  });
 }
 
 async function resetYear() {
@@ -446,12 +598,21 @@ async function resetYear() {
     content: "<p>This resets all four seasonal decks and clears the play-surface tracker. It does not erase the Cobalt Reach map or journals.</p>"
   });
   if (!confirmed) return;
-  for (const seasonKey of SEASON_ORDER) {
-    const deck = getDeck(seasonKey);
-    if (deck) await deck.updateEmbeddedDocuments("Card", deck.cards.map(c => ({ _id: c.id, drawn: false })));
-  }
-  await setState(freshState());
-  ui.notifications.info("Quiet Year decks and tracker reset.");
+  // The confirm deliberately sits outside the queue — waiting on a human there
+  // would hold every other write open — but the reset itself has to take its
+  // turn, or a Draw Week still awaiting its card updates will write its
+  // pre-reset state back over the cleared tracker.
+  return queueTrackerWrite(async () => {
+    for (const seasonKey of SEASON_ORDER) {
+      const deck = getDeck(seasonKey);
+      if (deck) await deck.updateEmbeddedDocuments("Card", deck.cards.map(c => ({ _id: c.id, drawn: false })));
+    }
+    // Stamped for the same reason migrateContemptIds() exists: a fresh state
+    // carries no ids, and rows should not change identity under a surface that
+    // has already drawn them.
+    await setState(stampContemptIds(freshState()));
+    ui.notifications.info("Quiet Year decks and tracker reset.");
+  });
 }
 
 class QuietYearPlaySurface extends Application {
@@ -600,6 +761,13 @@ class QuietYearPlaySurface extends Application {
       // Several cards branch on "if there are no projects underway", so the
       // notice has to key off the active ones, not off an empty list.
       hasActiveProjects: activeProjects(state).length > 0,
+      contempt: (state.contempt || []).map((entry, index) => {
+        const id = contemptId(entry, index);
+        return { id, name: entry.name, count: Number(entry.count || 0), field: `contempt-${id}-name` };
+      }),
+      // Players reach the world setting only through socketlib; without it the
+      // tokens stay GM-operated rather than looking clickable and doing nothing.
+      canAdjustContempt: game.user.isGM || !!contemptSocket,
       seasonLabel: SEASON_LABELS[seasonKey],
       remaining: seasonRemaining(seasonKey),
       currentCard: state.currentCard,
@@ -618,56 +786,86 @@ class QuietYearPlaySurface extends Application {
       if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
     });
 
-    root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek());
-    root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects());
-    root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear());
+    root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek().catch(reportTrackerFailure));
+    root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects().catch(reportTrackerFailure));
+    root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear().catch(reportTrackerFailure));
 
-    root.querySelector('[data-action="save-resources"]')?.addEventListener("click", async () => {
+    // The form is read here, synchronously, and only the state change is
+    // queued. `root` belongs to the render that bound this listener, and a
+    // render landing while the queue drains detaches it — a deferred read would
+    // then take its values from a dead node, including drafts _restoreFormState
+    // has already discarded in favour of someone else's committed value.
+    root.querySelector('[data-action="save-resources"]')?.addEventListener("click", () => {
       if (!game.user.isGM) return;
-      const state = getState();
-      const lines = id => (root.querySelector(id)?.value || "").split(/\n|,/).map(s => s.trim()).filter(Boolean);
-      state.abundances = lines('[name="abundances"]');
-      state.scarcities = lines('[name="scarcities"]');
-      state.contempt[0].name = root.querySelector('[name="player0-name"]')?.value?.trim() || "Player 1";
-      state.contempt[1].name = root.querySelector('[name="player1-name"]')?.value?.trim() || "Player 2";
-      this._clearDirty("abundances", "scarcities", "player0-name", "player1-name");
-      await setState(state);
-      ui.notifications.info("Quiet Year trackers saved.");
+      const lines = selector => (root.querySelector(selector)?.value || "").split(/\n|,/).map(s => s.trim()).filter(Boolean);
+      const abundances = lines('[name="abundances"]');
+      const scarcities = lines('[name="scarcities"]');
+      // Taken from the fields that are on screen rather than from the stored
+      // rows, because the two can disagree: a row added elsewhere has no field
+      // here yet, and this render may predate the write that stamped a row's
+      // real id. Each field carries the id it was drawn with, and
+      // contemptIndex() resolves the older form.
+      const names = [...root.querySelectorAll('[name^="contempt-"][name$="-name"]')]
+        .map(input => ({ field: input.name, id: input.name.slice("contempt-".length, -"-name".length), value: input.value.trim() }));
+      this._clearDirty("abundances", "scarcities", ...names.map(n => n.field));
+      queueTrackerWrite(async () => {
+        const state = getState();
+        state.abundances = abundances;
+        state.scarcities = scarcities;
+        for (const { id, value } of names) {
+          const index = contemptIndex(state, id);
+          if (index < 0) continue;
+          state.contempt[index].name = value || `Player ${index + 1}`;
+        }
+        stampContemptIds(state);
+        await setState(state);
+        ui.notifications.info("Quiet Year trackers saved.");
+      }).catch(reportTrackerFailure);
     });
 
-    root.querySelector('[data-action="add-project"]')?.addEventListener("click", async () => {
+    // Read now, queue the write: see the note on Save Trackers above.
+    root.querySelector('[data-action="add-project"]')?.addEventListener("click", () => {
       if (!game.user.isGM) return;
       const name = root.querySelector('[name="new-project-name"]')?.value?.trim();
       const weeks = Number(root.querySelector('[name="new-project-weeks"]')?.value || 1);
       if (!name) return ui.notifications.warn("Give the project a name.");
-      const state = getState();
-      state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
       this._clearDirty("new-project-name", "new-project-weeks");
-      await setState(state);
+      queueTrackerWrite(async () => {
+        const state = getState();
+        state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
+        await setState(state);
+      }).catch(reportTrackerFailure);
     });
 
     root.querySelectorAll('[data-project-finish]').forEach(el => el.addEventListener("click", ev => {
-      setProjectStatus(ev.currentTarget.dataset.projectFinish, "completed");
+      setProjectStatus(ev.currentTarget.dataset.projectFinish, "completed").catch(reportTrackerFailure);
     }));
 
     root.querySelectorAll('[data-project-cancel]').forEach(el => el.addEventListener("click", ev => {
-      setProjectStatus(ev.currentTarget.dataset.projectCancel, "cancelled");
+      setProjectStatus(ev.currentTarget.dataset.projectCancel, "cancelled").catch(reportTrackerFailure);
     }));
 
-    root.querySelectorAll('[data-project-remove]').forEach(el => el.addEventListener("click", async ev => {
-      if (!game.user.isGM) return;
+    root.querySelectorAll('[data-project-remove]').forEach(el => el.addEventListener("click", ev => {
       const id = ev.currentTarget.dataset.projectRemove;
-      const state = getState();
-      state.projects = state.projects.filter(p => p.id !== id);
-      await setState(state);
+      queueTrackerWrite(async () => {
+        if (!game.user.isGM) return;
+        const state = getState();
+        state.projects = state.projects.filter(p => p.id !== id);
+        await setState(state);
+      }).catch(reportTrackerFailure);
     }));
 
-    root.querySelectorAll('[data-contempt]').forEach(el => el.addEventListener("click", async ev => {
-      if (!game.user.isGM) return;
-      const [index, delta] = ev.currentTarget.dataset.contempt.split(":").map(Number);
-      const state = getState();
-      state.contempt[index].count = Math.max(0, Number(state.contempt[index].count || 0) + delta);
-      await setState(state);
+    root.querySelector('[data-action="add-contempt"]')?.addEventListener("click", () => {
+      addContemptRow().catch(reportTrackerFailure);
+    });
+
+    root.querySelectorAll('[data-contempt]').forEach(el => el.addEventListener("click", ev => {
+      const [id, delta] = ev.currentTarget.dataset.contempt.split(":");
+      adjustContempt(id, Number(delta)).catch(reportTrackerFailure);
+    }));
+
+    root.querySelectorAll('[data-contempt-remove]').forEach(el => el.addEventListener("click", ev => {
+      removeContemptRow(ev.currentTarget.dataset.contemptRemove).catch(reportTrackerFailure);
     }));
   }
 }
@@ -842,9 +1040,10 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, SEASONS, app: null };
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustContempt, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
+  await migrateContemptIds();
   if (game.settings.get(MODULE_ID, "installed")) return;
 
   new Dialog({

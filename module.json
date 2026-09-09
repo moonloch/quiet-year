@@ -17,5 +17,15 @@
   ],
   "styles": [
     "styles/quiet-year.css"
-  ]
+  ],
+  "socket": true,
+  "relationships": {
+    "requires": [
+      {
+        "id": "socketlib",
+        "type": "module",
+        "reason": "Relays a player's own Contempt adjustment to a GM client, since world settings are GM-write-only."
+      }
+    ]
+  }
 }

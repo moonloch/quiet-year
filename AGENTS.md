@@ -51,7 +51,9 @@ Everything lives in `scripts/quiet-year.js`, in four parts: the `SEASONS` card d
 
 **Everything is idempotent and flag-tagged.** The `ensureDeck`/`ensureJournal`/`ensureScene`/`ensureMacro` helpers find existing documents by `getFlag(MODULE_ID, …)` rather than by name, so `installKit()` doubles as the repair path and re-running it never duplicates.
 
-**GM-only writes.** Players cannot write world-scoped settings, so every mutating action returns early for non-GMs and the template disables their controls. Propagation to players is read-only by design; no permission changes or socket messages are involved.
+**GM-only writes, with one exception.** Players cannot write world-scoped settings, so every mutating action returns early for non-GMs and the template disables their controls. Contempt is the exception: the rules make taking it the player's own move, so `adjustContempt()` relays a non-GM click to a GM client through **socketlib**, which performs the write there. Any player may adjust any row — the rows are a shared table-facing signal and this is a trust-based game. Everything else stays read-only for players.
+
+**`"socket": true` needs a world relaunch.** socketlib's `registerModule()` refuses a module whose manifest does not declare `socket`, and Foundry reads that field when the **world is launched** — restarting the browser, or even the whole client, changes nothing. Symptom: `socketlib.modules` is empty, `registerModule()` logs to the console and returns `undefined`, and the play surface falls back to GM-only Contempt. Patching `game.modules.get(MODULE_ID).socket = true` at runtime makes registration succeed on that client but the server still drops the relayed event, so it is not a way to test this without the relaunch.
 
 `window.QuietYearCobalt` is the public surface (`installKit`, `openPlaySurface`, `drawWeek`, `tickProjects`, `resetYear`, and the live `app`). The generated macros call into it, so keep those names stable.
 

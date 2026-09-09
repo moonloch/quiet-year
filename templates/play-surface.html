@@ -59,19 +59,26 @@
 
   <section class="qyc-contempt">
     <h2>Contempt</h2>
-    {{#each state.contempt}}
+    <p class="qyc-muted">Take Contempt yourself rather than interrupting another player's turn.</p>
+    {{#each contempt}}
       <div class="qyc-contempt-row">
-        <input type="text" name="player{{@index}}-name" value="{{name}}" {{#unless ../isGM}}disabled{{/unless}}>
-        <button type="button" data-contempt="{{@index}}:-1" {{#unless ../isGM}}disabled{{/unless}}>−</button>
+        <input type="text" name="{{field}}" value="{{name}}" {{#unless ../isGM}}disabled{{/unless}}>
+        <button type="button" data-contempt="{{id}}:-1" title="Discard Contempt" {{#unless ../canAdjustContempt}}disabled{{/unless}}>−</button>
         <span class="qyc-contempt-count">{{count}}</span>
-        <button type="button" data-contempt="{{@index}}:1" {{#unless ../isGM}}disabled{{/unless}}>+</button>
+        <button type="button" data-contempt="{{id}}:1" title="Take Contempt" {{#unless ../canAdjustContempt}}disabled{{/unless}}>+</button>
+        {{#if ../isGM}}<button type="button" class="qyc-icon-button" data-contempt-remove="{{id}}" title="Remove player"><i class="fas fa-trash"></i></button>{{/if}}
       </div>
     {{/each}}
-    {{#if isGM}}<button type="button" data-action="save-resources"><i class="fas fa-save"></i> Save Trackers</button>{{/if}}
+    {{#if isGM}}
+    <div class="qyc-contempt-actions">
+      <button type="button" data-action="add-contempt"><i class="fas fa-user-plus"></i> Add Player</button>
+      <button type="button" data-action="save-resources"><i class="fas fa-save"></i> Save Trackers</button>
+    </div>
+    {{/if}}
   </section>
 
   <section class="qyc-footer">
     <button type="button" data-action="reset" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-rotate-left"></i> Reset Year</button>
-    {{#unless isGM}}<p class="qyc-muted">Tracker controls are GM-operated; the window remains useful as a shared reference.</p>{{/unless}}
+    {{#unless isGM}}<p class="qyc-muted">Contempt is yours to take and discard; the rest of the tracker is GM-operated.</p>{{/unless}}
   </section>
 </div>
