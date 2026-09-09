@@ -964,11 +964,13 @@ const drawWeek = serialized(async function drawWeek() {
   if (message?.id) await attachUndoMessage(message.id);
 
   if (state.gameOver) {
-    new Dialog({
-      title: "The Frost Shepherds Arrive",
+    // Deliberately not awaited: this runs inside the serialized write queue, so
+    // waiting on a human here would hold every other write open.
+    foundry.applications.api.DialogV2.prompt({
+      window: { title: "The Frost Shepherds Arrive" },
       content: "<p><strong>The game is over.</strong></p>",
-      buttons: { ok: { label: "So it ends." } }
-    }).render(true);
+      ok: { label: "So it ends." }
+    }).catch(err => console.error(`${MODULE_ID} |`, err));
   }
 });
 
@@ -1309,8 +1311,8 @@ async function removeContemptRow(id) {
 
 async function resetYear() {
   if (!game.user.isGM) return;
-  const confirmed = await Dialog.confirm({
-    title: "Reset Quiet Year?",
+  const confirmed = await foundry.applications.api.DialogV2.confirm({
+    window: { title: "Reset Quiet Year?" },
     content: "<p>This resets all four seasonal decks and clears the play-surface tracker. It does not erase the Cobalt Reach map or journals.</p>"
   });
   if (!confirmed) return;
@@ -1964,7 +1966,8 @@ async function installKit() {
     </ul>
     <p>You can disable the module after setup; the created world documents will remain.</p>
   </div>`;
-  new Dialog({ title: "Quiet Year — Cobalt Reach", content, buttons: { ok: { label: "Good" } } }).render(true);
+  foundry.applications.api.DialogV2.prompt({ window: { title: "Quiet Year — Cobalt Reach" }, content, ok: { label: "Good" } })
+    .catch(err => console.error(`${MODULE_ID} |`, err));
   return {decks, rules: rules.journal, setup: setup.journal, scene, macro, playMacro};
 }
 
@@ -2025,13 +2028,23 @@ Hooks.once("ready", async () => {
   await migrateContemptIds();
   if (game.settings.get(MODULE_ID, "installed")) return;
 
-  new Dialog({
-    title: "Install Quiet Year — Cobalt Reach?",
+  // Awaited rather than run from a button callback: a V1 callback neither
+  // awaited nor caught, so an install that threw before ensurePart() wrapped
+  // every step reached the GM as nothing at all. The promise DialogV2.wait
+  // returns puts the failure back on screen.
+  const choice = await foundry.applications.api.DialogV2.wait({
+    window: { title: "Install Quiet Year — Cobalt Reach?" },
     content: `<p>This module can add the four seasonal decks, reference journals, a blank Cobalt Reach drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter your world's actors, items, or system data.</p>`,
-    buttons: {
-      install: { label: "Install Kit", callback: () => installKit() },
-      later: { label: "Later" }
-    },
-    default: "install"
-  }).render(true);
+    buttons: [
+      { action: "install", label: "Install Kit", default: true },
+      { action: "later", label: "Later" }
+    ]
+  });
+  if (choice !== "install") return;
+  try {
+    await installKit();
+  } catch (err) {
+    console.error(`${MODULE_ID} |`, err);
+    ui.notifications.error("Quiet Year: the kit could not be installed — see the console.");
+  }
 });
