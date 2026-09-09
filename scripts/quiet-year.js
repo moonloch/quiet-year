@@ -257,7 +257,8 @@ const SHIPPED_FINGERPRINTS = {
   rules: [
     "uiyu9i",  // the original text, which opened with an <h1> of its own
     "13nbb4i", // the summary as the module last shipped it, before the text moved to content/
-    "1d1dnsj"  // RULES_PLACEHOLDER — the stand-in written when there is no content/rules.html
+    "1d1dnsj", // RULES_PLACEHOLDER — the stand-in written when there is no content/rules.html
+    "1bxr24l"  // the same stand-in, once it credited Alder and Buried Without Ceremony
   ],
   // The workbook is rewritten only where it still holds one of these, which is
   // what tells a page nobody has touched from one the table has filled in — so
@@ -265,7 +266,8 @@ const SHIPPED_FINGERPRINTS = {
   // one above.
   setup: [
     "vo70dq",
-    "1qebae1"
+    "1qebae1",
+    "1evc46j" // the workbook, once it carried the same credit
   ]
 };
 
@@ -1798,6 +1800,15 @@ function registerSidebarTab() {
   };
 }
 
+// The kit's own credit line, put on every page it writes. The rules page holds
+// the owner's transcription rather than anything of the module's, so nothing
+// there would otherwise name the work it came from; the workbook is the kit's
+// writing and should say the same. Kept as one constant so the two cannot drift
+// apart, and appended rather than woven in, so it is separable from the owner's
+// text and does not disturb it.
+const CREDIT_HTML = `<hr>
+<p><em>The Quiet Year</em> is designed and written by Avery Alder and published by Buried Without Ceremony: <a href="https://buriedwithoutceremony.com/the-quiet-year">buriedwithoutceremony.com/the-quiet-year</a>. This kit is an unofficial helper, carries none of the game’s text, and is no substitute for the rulebook.</p>`;
+
 // The rules summary is the game's text, so it lives in content/rules.html and
 // not here. When that file is absent the journal is still created, holding
 // this note instead — the kit's own writing, which is why its fingerprint
@@ -1806,7 +1817,8 @@ function registerSidebarTab() {
 const RULES_PLACEHOLDER = `
 <p><strong>This journal is waiting for its text.</strong></p>
 <p>The Quiet Year's turn structure and action summary are not shipped with this module. To fill this page in, create <code>content/rules.html</code> inside the module folder and write the summary there from your own copy of the game, then run <strong>Quiet Year: Install / Repair Kit</strong> again.</p>
-<p>The format is described in <code>content/README.md</code>. Everything else the kit installs — the decks, the play surface, the sector setup workbook — works without it.</p>`;
+<p>The format is described in <code>content/README.md</code>. Everything else the kit installs — the decks, the play surface, the sector setup workbook — works without it.</p>
+${CREDIT_HTML}`;
 
 // An unreadable rules.html is treated as absent, which is safe: the stand-in is
 // only ever *created*, never written over a page that already has text.
@@ -1831,7 +1843,8 @@ const setupHtml = `
 <p><strong>Optional two-player sector tweak:</strong> each player names two strategically important resources. Choose one total as an Abundance; the other three begin as Scarcities.</p>
 <table><thead><tr><th>Abundances</th><th>Scarcities</th></tr></thead><tbody><tr><td><br><br><br></td><td><br><br><br></td></tr></tbody></table>
 <h2>Names / factions / places worth remembering</h2><p><br><br><br><br></p>
-<h2>Looming end</h2><p>You can leave the Frost Shepherds mysterious or rename them later. Avoid defining exactly what their arrival means before play; the ambiguity is useful campaign fuel.</p>`;
+<h2>Looming end</h2><p>You can leave the Frost Shepherds mysterious or rename them later. Avoid defining exactly what their arrival means before play; the ambiguity is useful campaign fuel.</p>
+${CREDIT_HTML}`;
 
 // Every step of the install writes to documents, and most of them to documents
 // the kit did not create: a hook that throws, a rejected update, a veto. One
@@ -1905,7 +1918,7 @@ async function installKit() {
     }
   }
   const rules = await ensureJournalPart("rules", "Quiet Year — Rules & Turn Summary", "Table Reference", "rules",
-    wantedRules ?? RULES_PLACEHOLDER, { reconcile: true, createOnly: !wantedRules });
+    wantedRules ? `${wantedRules}\n${CREDIT_HTML}` : RULES_PLACEHOLDER, { reconcile: true, createOnly: !wantedRules });
   const setup = await ensureJournalPart("setup", "Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
   const scene = await ensurePart("Cobalt Reach scene", () => ensureScene());
   const macro = await ensurePart("Install / Repair macro", () => ensureMacro("installer"));

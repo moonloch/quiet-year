@@ -69,6 +69,11 @@ needed:
 
 Foundry sanitizes stored HTML, so a tag it does not allow will be dropped.
 
+You do not need to write a credit line into this file. The module appends its
+own below whatever is here, naming Avery Alder, Buried Without Ceremony and the
+publisher's page, so the journal credits the game whether or not you supply
+`rules.html` at all.
+
 ## If a file is missing
 
 Nothing breaks. The installer says which files it could not find, and:

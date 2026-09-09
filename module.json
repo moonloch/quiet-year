@@ -1,11 +1,12 @@
 {
   "id": "quiet-year",
   "title": "Quiet Year — Cobalt Reach Kit",
-  "description": "A lightweight, system-agnostic Foundry VTT v14 helper for running The Quiet Year inside an existing world. Includes the four seasonal decks, reference journals, Cobalt Reach scene, and a floating play surface for weeks, projects, resources, and Contempt.",
-  "version": "0.4.0",
+  "description": "An unofficial, system-agnostic Foundry VTT v14 helper for running The Quiet Year inside an existing world: the four seasonal decks, reference journals, a Cobalt Reach scene, and a floating play surface for weeks, projects, resources, and Contempt. The Quiet Year is designed and written by Avery Alder and published by Buried Without Ceremony (buriedwithoutceremony.com/the-quiet-year); this is an AI-assisted personal-use build that carries none of the game's text, which the owner supplies from their own copy.",
+  "version": "0.4.1",
   "authors": [
     {
-      "name": "Doyce / ChatGPT-assisted personal-use build"
+      "name": "Doyce",
+      "url": "https://github.com/moonloch/quiet-year"
     }
   ],
   "compatibility": {
@@ -15,6 +16,7 @@
   },
   "url": "https://github.com/moonloch/quiet-year",
   "bugs": "https://github.com/moonloch/quiet-year/issues",
+  "license": "LICENSE",
   "scripts": [
     "scripts/quiet-year.js"
   ],
