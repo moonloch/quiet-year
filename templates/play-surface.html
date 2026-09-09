@@ -1,14 +1,36 @@
 <div class="qyc-panel">
   <section class="qyc-turn">
     <div class="qyc-season-row">
-      <div><strong>{{seasonLabel}}</strong> <span class="qyc-muted">({{remaining}} cards remain)</span></div>
+      <div>
+        {{#if hasWeek}}<strong class="qyc-week">Week {{week}}</strong>{{else}}<strong class="qyc-week">Before the first week</strong>{{/if}}
+        <span class="qyc-muted">{{seasonLabel}}, {{remaining}} cards remain</span>
+      </div>
       {{#if gameOver}}<div class="qyc-game-over">THE QUIET YEAR IS OVER</div>{{/if}}
     </div>
-    <div class="qyc-turn-summary"><strong>Week:</strong> 1. Play a Card → 2. Adjust Project Dice → 3. Take an Action</div>
+    <div class="qyc-turn-summary">Each week: 1. Play a Card → 2. Adjust Project Dice → 3. Take an Action</div>
     <div class="qyc-actions">
       <button type="button" data-action="draw" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-clone"></i> Draw Week</button>
       <button type="button" data-action="tick-projects" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Tick Projects</button>
     </div>
+    {{#if hasWeek}}
+    <div class="qyc-week-action">
+      <div class="qyc-action-buttons">
+        {{#each actionChoices}}
+          <button type="button" data-week-action="{{kind}}" data-week="{{../week}}" {{#unless ../canTakeAction}}disabled{{/unless}}>{{label}}</button>
+        {{/each}}
+      </div>
+      {{#if weekActions}}
+        <div class="qyc-action-taken">
+          {{#each weekActions}}
+            <span class="qyc-action-chip">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-week-action-undo="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
+          {{/each}}
+        </div>
+      {{else}}
+        <p class="qyc-muted">No action recorded this week. Starting a project records itself.</p>
+      {{/if}}
+      {{#if allowanceLabel}}<p class="qyc-muted">{{allowanceLabel}}</p>{{/if}}
+    </div>
+    {{/if}}
   </section>
 
   <section class="qyc-current-card">
@@ -52,7 +74,7 @@
     <div class="qyc-add-project">
       <input type="text" name="new-project-name" placeholder="New project" data-add-on-enter="[data-action='add-project']">
       <input type="number" name="new-project-weeks" min="1" max="6" value="3">
-      <button type="button" data-action="add-project" title="Start a project"><i class="fas fa-plus"></i></button>
+      <button type="button" data-action="add-project" data-week="{{week}}" title="Start a project"><i class="fas fa-plus"></i></button>
     </div>
     {{#if hasActiveProjects}}
     <div class="qyc-reduce-projects">
@@ -105,6 +127,23 @@
     <button type="button" class="qyc-add-player" data-action="add-contempt"><i class="fas fa-user-plus"></i> Add Player</button>
     {{/if}}
   </section>
+
+  {{#if hasLog}}
+  <section class="qyc-history">
+    <details>
+      <summary>The year so far</summary>
+      <div class="qyc-history-list">
+        {{#each log}}
+          <div class="qyc-history-row">
+            <span class="qyc-history-week">{{week}}</span>
+            <span class="qyc-history-card">{{card}} <span class="qyc-muted">{{season}}</span></span>
+            <span class="qyc-muted">{{#if actions}}{{actions}}{{else}}—{{/if}}</span>
+          </div>
+        {{/each}}
+      </div>
+    </details>
+  </section>
+  {{/if}}
 
   <section class="qyc-footer">
     <button type="button" data-action="reset" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-rotate-left"></i> Reset Year</button>

@@ -200,6 +200,11 @@ const SEASON_LABELS = { spring: "Spring", summer: "Summer", autumn: "Autumn", wi
 function freshState() {
   return {
     season: "spring",
+    // Weeks resolved, not cards drawn: Summer's King discards two further cards
+    // without those being weeks of their own.
+    week: 0,
+    // One entry per week — the card drawn, and the actions taken against it.
+    log: [],
     currentCard: null,
     abundances: [],
     scarcities: [],
@@ -257,6 +262,20 @@ function reportTrackerFailure(err) {
   ui.notifications.error("The Quiet Year tracker could not be updated — see the console.");
 }
 
+// A week ends in one action of three. Starting a project is the only one that
+// already had any UI, so it is recorded from the Add Project flow rather than
+// asked for twice.
+const WEEK_ACTIONS = {
+  discover: "Discovered something new",
+  discussion: "Held a discussion",
+  project: "Started a project"
+};
+
+function currentWeek(state) {
+  const log = state.log || [];
+  return log.length ? log[log.length - 1] : null;
+}
+
 // A project is "active" until it either runs its die out (or is finished early)
 // or fails. Cancelled projects keep the weeks they had left, as the record of
 // where the work stood when it collapsed, so `weeks` alone cannot tell the
@@ -311,6 +330,29 @@ function stampContemptIds(state) {
 // ids existed settles on real ones before anything is rendered. Without it the
 // first write of the session would change every row's identity underneath a
 // surface that had already drawn them.
+// A game saved before weeks were counted has no true week number to recover.
+// Cards already drawn across the four decks is the closest approximation, and a
+// good deal better than sending an in-progress year back to week 1. Reads the
+// stored setting rather than getState(), which would have merged the default in
+// and hidden the absence.
+async function migrateWeekNumber() {
+  const stored = game.settings.get(MODULE_ID, "state");
+  if (!stored || stored.week !== undefined) return;
+  const drawn = SEASON_ORDER.reduce((total, key) => {
+    const deck = getDeck(key);
+    return total + (deck ? deck.cards.filter(card => card.drawn).length : 0);
+  }, 0);
+  if (!drawn) return;
+  const state = getState();
+  state.week = drawn;
+  // The log starts here, with an entry for the week already in play — without
+  // one, the surface would show a week whose action nothing could record.
+  if (!(state.log || []).length) {
+    state.log = [{ week: drawn, season: state.season || "spring", card: state.currentCard?.name || "—", actions: [], allowance: 1 }];
+  }
+  await setState(state);
+}
+
 async function migrateContemptIds() {
   const state = getState();
   if (!(state.contempt || []).some(entry => !entry.id)) return;
@@ -431,11 +473,18 @@ const drawWeek = serialized(async function drawWeek() {
     season: seasonKey
   };
 
+  state.week = Number(state.week || 0) + 1;
+  const week = { week: state.week, season: seasonKey, card: card.name, actions: [], allowance: 1 };
+  state.log = [...(state.log || []), week];
+
   // The King of Summer discards two more cards. Because the seasonal deck is
   // randomized, discarding two random undrawn cards is equivalent to discarding
   // the next two cards from a shuffled deck.
   if (seasonKey === "summer" && card.getFlag(MODULE_ID, "rank") === "K") {
     await markRandomCardsDrawn(deck, 2);
+    // The two discarded cards are not weeks of their own; the week they belong
+    // to simply gets two actions.
+    week.allowance = 2;
     ui.notifications.info("Summer is fleeting: two additional Summer cards were discarded. Take two actions this week.");
   }
 
@@ -580,6 +629,41 @@ const setProjectStatus = serialized(async function setProjectStatus(id, status) 
   await setState(state);
 
   await announceProjects(status === "completed" ? "Project finished early" : "Project failed", [project.name]);
+});
+
+// The week's action is recorded against the week rather than merely announced,
+// so a finished year reads back as what was drawn and what was done about it.
+// `week` is the week the click was aimed at, carried from the button that was
+// on screen. Without it this would record against whatever the last log entry
+// happens to be when the queued task runs — and a draw can slip in ahead of it,
+// putting the action on the following week and burning that week's allowance.
+const recordAction = serialized(async function recordAction(kind, { week: number, silent = false } = {}) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
+  if (!WEEK_ACTIONS[kind]) return;
+  const state = getState();
+  const log = state.log || [];
+  const week = number === undefined ? currentWeek(state) : log.find(entry => entry.week === Number(number));
+  if (!week) {
+    if (!silent) ui.notifications.warn("Draw a week before recording its action.");
+    return;
+  }
+  if (week.actions.length >= (week.allowance || 1)) {
+    // Not every project is the week's action — several cards call for one as
+    // part of their own prompt — so a full week just keeps its record.
+    if (!silent) ui.notifications.warn(`Week ${week.week} already has its actions recorded.`);
+    return;
+  }
+  week.actions.push(kind);
+  await setState(state);
+});
+
+const undoAction = serialized(async function undoAction(index) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
+  const state = getState();
+  const week = currentWeek(state);
+  if (!week || !week.actions[index]) return refreshPlaySurface();
+  week.actions.splice(index, 1);
+  await setState(state);
 });
 
 // Roughly a dozen cards add or remove one of these — "a new Abundance", "this
@@ -838,6 +922,28 @@ class QuietYearPlaySurface extends Application {
     this._renderedValues = rendered;
   }
 
+  // A render arrives whenever anyone writes, so anything the local user has put
+  // into the DOM has to survive one. Drafts and the caret are handled below;
+  // this covers the history's disclosure state and how far they have scrolled
+  // into it, neither of which is a form field.
+  _captureDisclosure(root) {
+    return [...root.querySelectorAll("details")].map(el => ({
+      open: el.open,
+      scroll: el.querySelector(".qyc-history-list")?.scrollTop || 0
+    }));
+  }
+
+  _restoreDisclosure(root, snapshot) {
+    if (!snapshot) return;
+    [...root.querySelectorAll("details")].forEach((el, index) => {
+      const state = snapshot[index];
+      if (!state) return;
+      el.open = state.open;
+      const list = el.querySelector(".qyc-history-list");
+      if (list) list.scrollTop = state.scroll;
+    });
+  }
+
   _captureFormState() {
     const root = this.element?.[0];
     if (!root) return null;
@@ -846,6 +952,7 @@ class QuietYearPlaySurface extends Application {
       const el = root.querySelector(`[name="${name}"]`);
       if (el) values[name] = el.value;
     }
+    const disclosure = this._captureDisclosure(root);
     const active = document.activeElement;
     let focus = null;
     if (active?.name && root.contains(active)) {
@@ -856,12 +963,13 @@ class QuietYearPlaySurface extends Application {
         focus.end = active.selectionEnd;
       } catch (_err) { /* caret position is a nicety, not a requirement */ }
     }
-    return { values, focus };
+    return { values, focus, disclosure };
   }
 
   _restoreFormState(snapshot) {
     const root = this.element?.[0];
     if (!snapshot || !root) return;
+    this._restoreDisclosure(root, snapshot.disclosure);
     const rendered = this._renderedValues;
     const previous = this._previousRenderedValues;
     for (const [name, value] of Object.entries(snapshot.values)) {
@@ -900,6 +1008,8 @@ class QuietYearPlaySurface extends Application {
   getData() {
     const state = getState();
     const seasonKey = state.season || "spring";
+    const week = currentWeek(state);
+    const allowance = week?.allowance || 1;
     return {
       isGM: game.user.isGM,
       state,
@@ -930,6 +1040,24 @@ class QuietYearPlaySurface extends Application {
       currentCard: state.currentCard,
       hasCurrentCard: !!state.currentCard,
       gameOver: !!state.gameOver,
+      week: state.week || 0,
+      hasWeek: !!state.week,
+      // Both the record of this week and what is still open on it.
+      weekActions: (week?.actions || []).map((kind, index) => ({ index, label: WEEK_ACTIONS[kind] })),
+      // Summer's King is the only card that grants two, so the count is worth
+      // spelling out only when there is more than one to take.
+      allowanceLabel: allowance > 1 ? `${(week?.actions || []).length} of ${allowance} actions taken` : "",
+      canTakeAction: game.user.isGM && !!week && (week.actions || []).length < allowance,
+      log: [...(state.log || [])].reverse().map(entry => ({
+        week: entry.week,
+        season: SEASON_LABELS[entry.season],
+        card: entry.card,
+        actions: (entry.actions || []).map(kind => WEEK_ACTIONS[kind]).join(", ")
+      })),
+      hasLog: !!(state.log || []).length,
+      actionChoices: Object.entries(WEEK_ACTIONS)
+        .filter(([kind]) => kind !== "project")
+        .map(([kind, label]) => ({ kind, label })),
       resources: Object.entries(RESOURCE_LISTS).map(([kind, label]) => ({
         kind,
         // The keys are already the plurals the columns are headed with.
@@ -948,6 +1076,15 @@ class QuietYearPlaySurface extends Application {
     root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
       if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
     });
+
+    root.querySelectorAll("[data-week-action]").forEach(el => el.addEventListener("click", ev => {
+      const button = ev.currentTarget;
+      recordAction(button.dataset.weekAction, { week: Number(button.dataset.week) }).catch(reportTrackerFailure);
+    }));
+
+    root.querySelectorAll("[data-week-action-undo]").forEach(el => el.addEventListener("click", ev => {
+      undoAction(Number(ev.currentTarget.dataset.weekActionUndo)).catch(reportTrackerFailure);
+    }));
 
     root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek().catch(reportTrackerFailure));
     root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects().catch(reportTrackerFailure));
@@ -1023,17 +1160,24 @@ class QuietYearPlaySurface extends Application {
     // The form is read here, synchronously, and only the state change is
     // queued: `root` belongs to this render, and a render landing while the
     // queue drains detaches it.
-    root.querySelector('[data-action="add-project"]')?.addEventListener("click", () => {
+    root.querySelector('[data-action="add-project"]')?.addEventListener("click", ev => {
       if (!game.user.isGM) return;
       const name = root.querySelector('[name="new-project-name"]')?.value?.trim();
       const weeks = Number(root.querySelector('[name="new-project-weeks"]')?.value || 1);
+      // The week as it was on screen when the button was pressed.
+      const week = Number(ev.currentTarget.dataset.week) || undefined;
       if (!name) return ui.notifications.warn("Give the project a name.");
       this._clearDirty("new-project-name", "new-project-weeks");
       queueTrackerWrite(async () => {
         const state = getState();
         state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
         await setState(state);
-      }).catch(reportTrackerFailure);
+      })
+        // Silent: several cards call for a project as part of their own prompt
+        // rather than as the week's action, and the chip can be taken off again
+        // when this was one of those.
+        .then(() => recordAction("project", { week, silent: true }))
+        .catch(reportTrackerFailure);
     });
 
     root.querySelectorAll("[data-project-weeks]").forEach(el => el.addEventListener("click", ev => {
@@ -1253,10 +1397,11 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, adjustContempt, renameContemptRow,
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, recordAction, adjustContempt, renameContemptRow,
     addResource, renameResource, removeResource, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
+  await migrateWeekNumber();
   await migrateContemptIds();
   if (game.settings.get(MODULE_ID, "installed")) return;
 
