@@ -33,3 +33,47 @@
   .qyc-columns { grid-template-columns: 1fr; }
   .qyc-actions { grid-template-columns: 1fr; }
 }
+
+/* ------------------------------------------------------------------ */
+/*  Sidebar tab                                                       */
+/* ------------------------------------------------------------------ */
+
+/* The tab-strip button. `Sidebar.TABS[…].icon` is emitted as classes on the
+   button, so instead of a Font Awesome glyph we get a hook to paint our own
+   mark on — a "Q" in Foundry's display serif. Using a pseudo-element leaves
+   the button's own hover/active/pressed states untouched. */
+#sidebar-tabs button.ui-control.quiet-year-tab-icon::before {
+  content: "Q";
+  display: block;
+  width: 100%;
+  font-family: var(--font-h1, "Modesto Condensed"), serif;
+  font-size: 1.6rem;
+  font-weight: 700;
+  line-height: 1;
+  text-align: center;
+}
+
+/* The tab body. `root: true` hoists the template's children straight into the
+   tab element, which carries `.quiet-year-sidebar` (from `tabName`).
+
+   Core's `.tab[data-tab]:not(.active) { display: none }` sits in a CSS @layer
+   and module stylesheets are unlayered, so an unconditional `display: flex`
+   here would outrank it and leave this tab showing underneath every other one.
+   Scope the layout to the active tab and to the popout, where the content
+   lands in `.window-content` instead. */
+.sidebar-tab.quiet-year-sidebar.active,
+.quiet-year-sidebar.sidebar-popout .window-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 12px 12px;
+}
+
+.quiet-year-sidebar h4.divider {
+  margin: 0;
+}
+
+/* The popout's own window title already reads "The Quiet Year". */
+.quiet-year-sidebar.sidebar-popout h4.divider {
+  display: none;
+}
