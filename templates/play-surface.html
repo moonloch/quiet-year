@@ -1,0 +1,72 @@
+<div class="qyc-panel">
+  <section class="qyc-turn">
+    <div class="qyc-season-row">
+      <div><strong>{{seasonLabel}}</strong> <span class="qyc-muted">({{remaining}} cards remain)</span></div>
+      {{#if gameOver}}<div class="qyc-game-over">THE QUIET YEAR IS OVER</div>{{/if}}
+    </div>
+    <div class="qyc-turn-summary"><strong>Week:</strong> 1. Play a Card → 2. Adjust Project Dice → 3. Take an Action</div>
+    <div class="qyc-actions">
+      <button type="button" data-action="draw" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-clone"></i> Draw Week</button>
+      <button type="button" data-action="tick-projects" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Tick Projects</button>
+    </div>
+  </section>
+
+  <section class="qyc-current-card">
+    <h2>Current Card</h2>
+    {{#if hasCurrentCard}}
+      <h3>{{currentCard.name}} — {{seasonLabel}}</h3>
+      <div class="qyc-card-text">{{{currentCard.description}}}</div>
+    {{else}}
+      <p class="qyc-muted">No week has been drawn yet.</p>
+    {{/if}}
+  </section>
+
+  <section>
+    <h2>Projects</h2>
+    <div class="qyc-projects">
+      {{#each state.projects}}
+        <div class="qyc-project {{#if completed}}completed{{/if}}">
+          <span class="qyc-project-die">{{weeks}}</span>
+          <span class="qyc-project-name">{{name}}</span>
+          {{#if completed}}<span class="qyc-complete">complete</span>{{/if}}
+          <button type="button" class="qyc-icon-button" data-project-remove="{{id}}" title="Remove project" {{#unless ../isGM}}disabled{{/unless}}><i class="fas fa-trash"></i></button>
+        </div>
+      {{else}}
+        <p class="qyc-muted">No projects underway.</p>
+      {{/each}}
+    </div>
+    {{#if isGM}}
+    <div class="qyc-add-project">
+      <input type="text" name="new-project-name" placeholder="New project">
+      <input type="number" name="new-project-weeks" min="1" max="6" value="3">
+      <button type="button" data-action="add-project"><i class="fas fa-plus"></i></button>
+    </div>
+    {{/if}}
+  </section>
+
+  <section class="qyc-resources">
+    <h2>Resources</h2>
+    <div class="qyc-columns">
+      <label><strong>Abundances</strong><textarea name="abundances" rows="4" {{#unless isGM}}disabled{{/unless}}>{{abundancesText}}</textarea></label>
+      <label><strong>Scarcities</strong><textarea name="scarcities" rows="4" {{#unless isGM}}disabled{{/unless}}>{{scarcitiesText}}</textarea></label>
+    </div>
+  </section>
+
+  <section class="qyc-contempt">
+    <h2>Contempt</h2>
+    {{#each state.contempt}}
+      <div class="qyc-contempt-row">
+        <input type="text" name="player{{@index}}-name" value="{{name}}" {{#unless ../isGM}}disabled{{/unless}}>
+        <button type="button" data-contempt="{{@index}}:-1" {{#unless ../isGM}}disabled{{/unless}}>−</button>
+        <span class="qyc-contempt-count">{{count}}</span>
+        <button type="button" data-contempt="{{@index}}:1" {{#unless ../isGM}}disabled{{/unless}}>+</button>
+      </div>
+    {{/each}}
+    {{#if isGM}}<button type="button" data-action="save-resources"><i class="fas fa-save"></i> Save Trackers</button>{{/if}}
+  </section>
+
+  <section class="qyc-footer">
+    <button type="button" data-action="reset" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-rotate-left"></i> Reset Year</button>
+    {{#unless isGM}}<p class="qyc-muted">Tracker controls are GM-operated; the window remains useful as a shared reference.</p>{{/unless}}
+  </section>
+</div>
