@@ -467,8 +467,27 @@ async function announceProjects(heading, names) {
   });
 }
 
-const tickProjects = serialized(async function tickProjects() {
+function completeProject(project) {
+  project.status = "completed";
+  delete project.completed;
+}
+
+// A die that has run out is a finished project however it got there, so the
+// weekly tick, Winter 6's bulk reduction and a hand-adjusted countdown all
+// finish through here.
+async function announceCompleted(completed) {
+  if (!completed.length) return;
+  const plural = completed.length > 1 ? "s" : "";
+  ui.notifications.info(`Project${plural} complete: ${completed.join(", ")}`);
+  await announceProjects(`Project${plural} complete`, completed);
+}
+
+// `weeks` is a parameter because Winter 6 reduces every remaining project by 2
+// in one stroke: "the time has come to consolidate your efforts and your
+// borders". The weekly tick is the same operation with a week of one.
+const tickProjects = serialized(async function tickProjects(weeks = 1) {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
+  const reduction = Math.max(1, Math.floor(Number(weeks) || 1));
   const state = getState();
   const completed = [];
   // Only active projects count down. A cancelled project still has weeks left
@@ -476,18 +495,68 @@ const tickProjects = serialized(async function tickProjects() {
   // finished.
   for (const project of activeProjects(state)) {
     if (Number(project.weeks) > 0) {
-      project.weeks = Math.max(0, Number(project.weeks) - 1);
+      project.weeks = Math.max(0, Number(project.weeks) - reduction);
       if (project.weeks === 0) {
-        project.status = "completed";
-        delete project.completed;
+        completeProject(project);
         completed.push(project.name);
       }
     }
   }
   await setState(state);
-  if (!completed.length) return;
-  ui.notifications.info(`Project${completed.length > 1 ? "s" : ""} complete: ${completed.join(", ")}`);
-  await announceProjects(`Project${completed.length > 1 ? "s" : ""} complete`, completed);
+  await announceCompleted(completed);
+});
+
+// Autumn A adds three weeks to a project die, so this deliberately has no
+// ceiling — the 1–6 clamp on Add Project belongs to the *initial* die, not to
+// what the year does to it afterwards. A die worked down to zero is finished,
+// the same as one that ticked there.
+const adjustProjectWeeks = serialized(async function adjustProjectWeeks(id, delta) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
+  // Exported for macros, so the die is protected from a step that would land
+  // NaN in the setting: that serializes to null, and a project with a blank
+  // die is skipped by every countdown from then on.
+  const step = Number(delta);
+  if (!Number.isInteger(step) || step === 0) return;
+  const state = getState();
+  const project = (state.projects || []).find(p => p.id === id);
+  if (!project) return ui.notifications.warn("That project is no longer on the tracker.");
+  if (projectStatus(project) !== "active") {
+    // Clicking − faster than the 100ms render debounce leaves the stepper on
+    // screen for a project that just finished. There is nothing to say about
+    // a spent die; a cancelled project with weeks still on it is a real slip.
+    if (Number(project.weeks) > 0) ui.notifications.warn(`${project.name} is no longer underway.`);
+    return;
+  }
+
+  project.weeks = Math.max(0, Number(project.weeks || 0) + step);
+  const completed = project.weeks === 0;
+  if (completed) completeProject(project);
+  await setState(state);
+  if (completed) await announceCompleted([project.name]);
+});
+
+// Autumn 7 radically changes what a project is while insisting the die stays
+// put, so a rename touches nothing else.
+const renameProject = serialized(async function renameProject(id, name) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
+  // Every path that declines to write refreshes, because the typed name is
+  // sitting in the field and is no longer held as a draft. Without this the
+  // surface would keep showing a name the world does not have until some
+  // unrelated change happened to re-render it.
+  const trimmed = String(name).trim();
+  if (!trimmed) {
+    ui.notifications.warn("A project needs a name.");
+    return refreshPlaySurface();
+  }
+  const state = getState();
+  const project = (state.projects || []).find(p => p.id === id);
+  if (!project) {
+    ui.notifications.warn("That project is no longer on the tracker.");
+    return refreshPlaySurface();
+  }
+  if (project.name === trimmed) return refreshPlaySurface();
+  project.name = trimmed;
+  await setState(state);
 });
 
 // The cards call for both of these constantly — "a project finishes early", "a
@@ -755,7 +824,8 @@ class QuietYearPlaySurface extends Application {
           weeks: project.weeks,
           status,
           isActive: status === "active",
-          statusLabel: PROJECT_STATUS_LABELS[status]
+          statusLabel: PROJECT_STATUS_LABELS[status],
+          field: `project-${project.id}-name`
         };
       }),
       // Several cards branch on "if there are no projects underway", so the
@@ -835,6 +905,41 @@ class QuietYearPlaySurface extends Application {
         state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
         await setState(state);
       }).catch(reportTrackerFailure);
+    });
+
+    // Renames commit on blur and on Enter rather than from a save button, so
+    // the draft has to survive a render arriving mid-word like every other
+    // field, and stop counting as a draft once it is committed.
+    //
+    // Deliberately not the `change` event: _restoreFormState writes a surviving
+    // draft back with `el.value = …`, which resets the element's idea of what
+    // it held at the last change. A rename typed before that render and blurred
+    // after it would fire no change event at all and be quietly lost.
+    const commitRename = input => {
+      if (input.value === this._renderedValues[input.name]) return this._clearDirty(input.name);
+      this._clearDirty(input.name);
+      renameProject(input.dataset.projectRename, input.value).catch(reportTrackerFailure);
+    };
+
+    root.querySelectorAll("[data-project-rename]").forEach(el => {
+      el.addEventListener("blur", ev => commitRename(ev.currentTarget));
+      el.addEventListener("keydown", ev => {
+        if (ev.key === "Enter") ev.currentTarget.blur();
+      });
+    });
+
+    root.querySelectorAll("[data-project-weeks]").forEach(el => el.addEventListener("click", ev => {
+      const [id, delta] = ev.currentTarget.dataset.projectWeeks.split(":");
+      adjustProjectWeeks(id, Number(delta)).catch(reportTrackerFailure);
+    }));
+
+    // Winter 6's "all remaining projects are reduced by 2 this week" — the
+    // weekly tick with a different number of weeks.
+    root.querySelector('[data-action="reduce-projects"]')?.addEventListener("click", () => {
+      if (!game.user.isGM) return;
+      const weeks = Number(root.querySelector('[name="reduce-weeks"]')?.value || 2);
+      this._clearDirty("reduce-weeks");
+      tickProjects(weeks).catch(reportTrackerFailure);
     });
 
     root.querySelectorAll('[data-project-finish]').forEach(el => el.addEventListener("click", ev => {
@@ -1040,7 +1145,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustContempt, SEASONS, app: null };
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, adjustContempt, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
   await migrateContemptIds();

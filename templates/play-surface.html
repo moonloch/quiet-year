@@ -26,8 +26,16 @@
     <div class="qyc-projects">
       {{#each projects}}
         <div class="qyc-project {{status}}">
-          <span class="qyc-project-die">{{weeks}}</span>
-          <span class="qyc-project-name">{{name}}</span>
+          <span class="qyc-project-die-group">
+            <span class="qyc-project-die">{{weeks}}</span>
+            {{#if isActive}}
+              {{#if ../isGM}}
+                <button type="button" class="qyc-step-button" data-project-weeks="{{id}}:-1" title="Shorten by a week">−</button>
+                <button type="button" class="qyc-step-button" data-project-weeks="{{id}}:1" title="Add a week">+</button>
+              {{/if}}
+            {{/if}}
+          </span>
+          <input type="text" class="qyc-project-name" name="{{field}}" value="{{name}}" title="{{name}}" data-project-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
           <span class="qyc-project-controls">
             {{#if statusLabel}}<span class="qyc-project-status">{{statusLabel}}</span>{{/if}}
             {{#if isActive}}
@@ -44,8 +52,15 @@
     <div class="qyc-add-project">
       <input type="text" name="new-project-name" placeholder="New project">
       <input type="number" name="new-project-weeks" min="1" max="6" value="3">
-      <button type="button" data-action="add-project"><i class="fas fa-plus"></i></button>
+      <button type="button" data-action="add-project" title="Start a project"><i class="fas fa-plus"></i></button>
     </div>
+    {{#if hasActiveProjects}}
+    <div class="qyc-reduce-projects">
+      <span class="qyc-muted">Reduce every project by</span>
+      <input type="number" name="reduce-weeks" min="1" max="6" value="2">
+      <button type="button" data-action="reduce-projects" title="Reduce every active project"><i class="fas fa-angles-down"></i></button>
+    </div>
+    {{/if}}
     {{/if}}
   </section>
 
