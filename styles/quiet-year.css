@@ -5,7 +5,11 @@
 .qyc-panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; container-type: inline-size; container-name: qyc-panel; }
 .qyc-panel section { border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; padding: 10px; }
 .qyc-panel h2 { margin: 0 0 8px; font-size: 1.15rem; }
-.qyc-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+/* A section heading that carries a control of its own. The heading's bottom
+   margin moves to the row, so the h2 and the button centre on each other
+   rather than the button riding 8px high. */
+.qyc-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.qyc-section-head h2 { margin-bottom: 0; }
 .qyc-panel h3 { margin: 4px 0 8px; font-size: 1.05rem; }
 /* The play surface is two columns rather than one tall stack: the week, the
    card and Resources on the left, Projects and Contempt on the right. Projects
@@ -81,6 +85,15 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project-controls .qyc-icon-button { flex: 0 0 28px; width: 28px; }
 .qyc-icon-button { min-width: 28px; padding: 3px; }
 .qyc-add-project { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 8px; }
+/* Core sizes a button 28px and an input 32px, so a field and the button that
+   submits it do not line up on their own: the button is pinned to the top of
+   the row with 4px of daylight beneath it. Stretching it to the row's height
+   makes the pair read as one control. */
+.qyc-add-project button, .qyc-resource-add button { height: 100%; }
+/* Both number fields hold a week count of one or two digits in a box wide
+   enough for four, so left-aligned they read as text someone typed rather than
+   as the value the stepper beside them is about to change. */
+.qyc-panel input[type="number"] { text-align: center; }
 .qyc-reduce-projects { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 5px; align-items: center; }
 .qyc-reduce-projects .qyc-muted { text-align: right; }
 .qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
