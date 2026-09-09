@@ -2009,7 +2009,7 @@ Hooks.once("ready", async () => {
 
   new Dialog({
     title: "Install Quiet Year — Cobalt Reach?",
-    content: `<p>This module can add the four seasonal decks, reference journals, a blank Cobalt Reach drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter Starforged actors, items, or system data.</p>`,
+    content: `<p>This module can add the four seasonal decks, reference journals, a blank Cobalt Reach drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter your world's actors, items, or system data.</p>`,
     buttons: {
       install: { label: "Install Kit", callback: () => installKit() },
       later: { label: "Later" }

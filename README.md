@@ -44,7 +44,7 @@ A malformed deck file is reported against the file rather than quietly producing
 
 1. Copy the entire `quiet-year` folder into your Foundry user-data `Data/modules/` directory.
 2. Restart Foundry.
-3. Open the existing Starforged world.
+3. Open the world you want to run it in.
 4. Install **socketlib** from Foundry's module browser if you do not already have it. This kit requires it and declares the dependency, but without a manifest URL Foundry cannot offer to fetch it for you — it will simply refuse to enable the kit until socketlib is present. socketlib is what lets a player take and discard Contempt: world settings are GM-write-only, so a player's click is relayed to a GM client.
 5. Enable **Quiet Year — Cobalt Reach Kit** and **socketlib** under Manage Modules.
 6. Fill in `content/` from your own copy of the game — the format is documented in [`content/README.md`](content/README.md). You can skip this and do it later; see above for what the kit does without it.
@@ -72,7 +72,7 @@ Players see the same surface, read-only apart from Contempt.
 
 The original game separates the deck by season and shuffles each suit separately. These four Foundry decks mirror that setup. Start with Spring, then Summer, Autumn, and Winter. **The Winter King ends the game immediately.**
 
-The kit intentionally leaves map drawing to Foundry's native Drawing tools. That keeps the module system-agnostic and avoids interfering with the Starforged system.
+The kit intentionally leaves map drawing to Foundry's native Drawing tools. That keeps the module system-agnostic and avoids interfering with whatever system your world runs.
 
 ## Two-player / sector-scale note
 
@@ -83,7 +83,7 @@ The rules support two players. For Cobalt Reach, the setup journal includes the 
 - This is a personal-use helper, not an official or distributable Quiet Year product.
 - The game's text is not distributed with this module. `content/` is gitignored, so a clone carries none of it, and the owner supplies their own transcription. The *Cobalt Reach — Quiet Year Setup* journal is original writing about sector-scale play and does live in the source.
 - A deck that already exists is never rewritten by a repair run, because its cards carry which have been drawn — the record of the year so far. To pick up new or corrected text for a season already installed, delete that deck and repair. Corrected `rules.html` needs only the repair run.
-- The kit creates world documents rather than shipping binary LevelDB compendium packs. This makes it much easier to add directly to an already-running Starforged world. A later version can package the same source documents into true module compendia using Foundry's official CLI.
+- The kit creates world documents rather than shipping binary LevelDB compendium packs. This makes it much easier to add directly to a world that is already running. A later version can package the same source documents into true module compendia using Foundry's official CLI.
 
 ## Changelog
 
