@@ -2,7 +2,20 @@
 
 Personal-use helper module for running *The Quiet Year* inside an existing Foundry world.
 
-*The Quiet Year* is by Avery Alder, published by Buried Without Ceremony. **This repository contains none of the game's text.** The card prompts and the rules summary are read at install time from `content/`, which you fill in from your own copy — see [`content/README.md`](content/README.md) for the format. The module supplies only the machinery around them.
+## Install
+
+There is no manifest URL — this is a manual install.
+
+1. **Copy the `quiet-year` folder** into your Foundry user-data `Data/modules/` directory, so that the module's `module.json` sits at `Data/modules/quiet-year/module.json`. The folder must keep that name; Foundry refuses to load a package whose id does not match its directory.
+2. **Restart Foundry.**
+3. **Install socketlib first**, from Foundry's module browser on the setup screen. This kit requires it and declares the dependency, but without a manifest URL Foundry cannot offer to fetch it for you — it will simply refuse to enable the kit until socketlib is present. socketlib is what lets a player take and discard Contempt: world settings are GM-write-only, so a player's click is relayed to a GM client.
+4. **Enable both modules.** Launch the world you want to run the kit in, then under **Manage Modules** enable **Quiet Year — Cobalt Reach Kit** and **socketlib**.
+5. **As GM, accept the one-time prompt** to install the kit into the world. If you dismiss it, run the macro **Quiet Year: Install / Repair Kit** instead — the two do the same thing, and the macro is also the repair path if anything goes missing later.
+6. **Supply the game text in `content/`**, transcribed from your own copy — five files inside `Data/modules/quiet-year/content/`, in the format documented in [`content/README.md`](content/README.md). You can skip this and come back to it: the kit installs and runs without it, and re-running the **Quiet Year: Install / Repair Kit** macro afterwards picks up what you have added.
+
+Note that the module declares `"socket": true`, which Foundry reads when the **world is launched**. If you add or update this module while a world is running, relaunch the world — reloading the browser is not enough, and Contempt will stay GM-operated until you do.
+
+*The Quiet Year* is by Avery Alder, published by Buried Without Ceremony. **This repository contains none of the game's text.** The card prompts and the rules summary are read at install time from `content/`, which you fill in from your own copy. The module supplies only the machinery around them.
 
 ## What the kit installs
 
@@ -39,20 +52,6 @@ Each run re-reads from disk rather than answering from the last run's results, s
 A malformed deck file is reported against the file rather than quietly producing a deck that is short a card: invalid JSON, or no `cards` array, and nothing is taken from it. Individual entries that cannot be used — an unknown rank, a missing prompt, a rank appearing twice — are skipped and named in the console, and the ranks they leave unfilled are created without text.
 
 `rules.html` is only ever *created* from that stand-in note, never written over a page that already has text. The kit fingerprints what it writes, so a repair run can tell a page it last touched from one you have written in yourself, and leaves yours alone.
-
-## Install
-
-1. Copy the entire `quiet-year` folder into your Foundry user-data `Data/modules/` directory.
-2. Restart Foundry.
-3. Open the world you want to run it in.
-4. Install **socketlib** from Foundry's module browser if you do not already have it. This kit requires it and declares the dependency, but without a manifest URL Foundry cannot offer to fetch it for you — it will simply refuse to enable the kit until socketlib is present. socketlib is what lets a player take and discard Contempt: world settings are GM-write-only, so a player's click is relayed to a GM client.
-5. Enable **Quiet Year — Cobalt Reach Kit** and **socketlib** under Manage Modules.
-6. Fill in `content/` from your own copy of the game — the format is documented in [`content/README.md`](content/README.md). You can skip this and do it later; see above for what the kit does without it.
-7. As GM, accept the one-time prompt to install the kit.
-
-Note that the module declares `"socket": true`, which Foundry reads when the **world is launched**. If you add or update this module while a world is running, relaunch the world — reloading the browser is not enough, and Contempt will stay GM-operated until you do.
-
-If you dismiss the prompt, run the macro **Quiet Year: Install / Repair Kit**.
 
 ## The play surface
 
