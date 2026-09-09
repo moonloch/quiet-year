@@ -1,107 +1,150 @@
 const MODULE_ID = "quiet-year";
 
+// The Quiet Year's own text is not this repository's to carry, so what stays
+// here is only the structure the module invents: which suit is which season,
+// what each deck is called, and the ranks a deck holds. The prompts live in
+// content/, which the owner fills in from their own copy and which is
+// gitignored, so a clone of this repository contains none of the game.
 const SEASONS = {
-  spring: {
-    name: "Quiet Year — Spring",
-    suit: "♥",
-    suitName: "Hearts",
-    cards: [
-      ["A", "See content/*.json", null],
-      ["2", "See content/*.json", null],
-      ["3", "See content/*.json", null],
-      ["4", "See content/*.json", null],
-      ["5", "See content/*.json", null],
-      ["6", "See content/*.json", null],
-      ["7", "See content/*.json", null],
-      ["8", "See content/*.json", null],
-      ["9", "See content/*.json", null],
-      ["10", "See content/*.json", null],
-      ["J", "See content/*.json", null],
-      ["Q", "See content/*.json", null],
-      ["K", "See content/*.json", null]
-    ]
-  },
-  summer: {
-    name: "Quiet Year — Summer",
-    suit: "♦",
-    suitName: "Diamonds",
-    cards: [
-      ["A", "See content/*.json", null],
-      ["2", "See content/*.json", null],
-      ["3", "See content/*.json", null],
-      ["4", "See content/*.json", null],
-      ["5", "See content/*.json", null],
-      ["6", "See content/*.json", null],
-      ["7", "See content/*.json", null],
-      ["8", "See content/*.json", null],
-      ["9", "See content/*.json", null],
-      ["10", "See content/*.json", null],
-      ["J", "See content/*.json", null],
-      ["Q", "See content/*.json", null],
-      ["K", "See content/*.json", null]
-    ]
-  },
-  autumn: {
-    name: "Quiet Year — Autumn",
-    suit: "♣",
-    suitName: "Clubs",
-    cards: [
-      ["A", "See content/*.json", null],
-      ["2", "See content/*.json", null],
-      ["3", "See content/*.json", null],
-      ["4", "See content/*.json", null],
-      ["5", "See content/*.json", null],
-      ["6", "See content/*.json", null],
-      ["7", "See content/*.json", null],
-      ["8", "See content/*.json", null],
-      ["9", "See content/*.json", null],
-      ["10", "See content/*.json", null],
-      ["J", "See content/*.json", null],
-      ["Q", "See content/*.json", null],
-      ["K", "See content/*.json", null]
-    ]
-  },
-  winter: {
-    name: "Quiet Year — Winter",
-    suit: "♠",
-    suitName: "Spades",
-    cards: [
-      ["A", "See content/*.json", null],
-      ["2", "See content/*.json", null],
-      ["3", "See content/*.json", null],
-      ["4", "See content/*.json", null],
-      ["5", "See content/*.json", null],
-      ["6", "See content/*.json", null],
-      ["7", "See content/*.json", null],
-      ["8", "See content/*.json", null],
-      ["9", "See content/*.json", null],
-      ["10", "See content/*.json", null],
-      ["J", "See content/*.json", null],
-      ["Q", "See content/*.json", null],
-      ["K", "See content/*.json", null]
-    ]
-  }
+  spring: { name: "Quiet Year — Spring", suit: "♥", suitName: "Hearts" },
+  summer: { name: "Quiet Year — Summer", suit: "♦", suitName: "Diamonds" },
+  autumn: { name: "Quiet Year — Autumn", suit: "♣", suitName: "Clubs" },
+  winter: { name: "Quiet Year — Winter", suit: "♠", suitName: "Spades" }
 };
 
-function cardDescription(first, second) {
-  const blocks = [`<p>${first}</p>`];
-  if (second) blocks.push(`<hr><p><em>or…</em></p><p>${second}</p>`);
+const CARD_RANKS = ["A", "2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K"];
+const CONTENT_FILES = ["spring.json", "summer.json", "autumn.json", "winter.json", "rules.html"];
+
+function contentPath(file) {
+  const route = `modules/${MODULE_ID}/content/${file}`;
+  return foundry.utils.getRoute?.(route) ?? `/${route}`;
+}
+
+// Read once per install run rather than once per session: the whole documented
+// remedy for a missing file is to drop it in and run the repair again, and a
+// cache that outlived the run would answer that second run from the first
+// one's disappointment.
+const contentCache = new Map();
+
+function forgetContent() {
+  contentCache.clear();
+}
+
+// Three outcomes, not two. `absent` is the expected case for someone who has
+// not transcribed their copy yet and is not an error. `error` is different in
+// kind — the file may well be sitting there — so nothing is built as though it
+// were empty, and it is not cached, leaving the next run free to succeed.
+async function readContent(file) {
+  if (contentCache.has(file)) return contentCache.get(file);
+  let result;
+  try {
+    const response = await fetch(contentPath(file));
+    if (response.ok) result = { status: "present", text: await response.text() };
+    else if (response.status === 404) result = { status: "absent" };
+    else result = { status: "error", reason: `HTTP ${response.status}` };
+  } catch (err) {
+    result = { status: "error", reason: err.message };
+  }
+  if (result.status === "error") {
+    console.error(`${MODULE_ID} | content/${file} could not be read: ${result.reason}`);
+    return result;
+  }
+  contentCache.set(file, result);
+  return result;
+}
+
+async function contentReport() {
+  const absent = [];
+  const unreadable = [];
+  for (const file of CONTENT_FILES) {
+    const result = await readContent(file);
+    if (result.status === "absent") absent.push(file);
+    else if (result.status === "error") unreadable.push(file);
+  }
+  return { absent, unreadable };
+}
+
+// The files are the owner's own transcription, so a mistake in one has to say
+// what is wrong with which file rather than producing a deck that is quietly
+// short a card or holding a blank prompt.
+async function seasonCards(seasonKey) {
+  const content = await readContent(`${seasonKey}.json`);
+  // A file that could not be read may be perfectly good and simply unreachable
+  // this moment. Building a textless deck from that would be permanent — a deck
+  // is never rewritten once it exists, because its cards carry which have been
+  // drawn — so the caller is told to build nothing at all.
+  if (content.status === "error") return "unreadable";
+  if (content.status === "absent") return null;
+  const raw = content.text;
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch (err) {
+    console.error(`${MODULE_ID} | content/${seasonKey}.json is not valid JSON`, err);
+    ui.notifications.error(`Quiet Year: content/${seasonKey}.json is not valid JSON. See console for details.`);
+    return null;
+  }
+  if (!Array.isArray(parsed?.cards)) {
+    console.error(`${MODULE_ID} | content/${seasonKey}.json has no "cards" array.`);
+    ui.notifications.error(`Quiet Year: content/${seasonKey}.json has no "cards" array.`);
+    return null;
+  }
+  const byRank = new Map();
+  const unusable = [];
+  for (const entry of parsed.cards) {
+    const rank = typeof entry?.rank === "string" ? entry.rank.trim() : "";
+    if (!CARD_RANKS.includes(rank)) { unusable.push(`unknown rank ${JSON.stringify(entry?.rank)}`); continue; }
+    if (typeof entry?.prompt !== "string" || !entry.prompt.trim()) { unusable.push(`${rank} has no prompt`); continue; }
+    if (byRank.has(rank)) { unusable.push(`${rank} appears more than once`); continue; }
+    const alternate = typeof entry.alternate === "string" && entry.alternate.trim() ? entry.alternate.trim() : null;
+    byRank.set(rank, { prompt: entry.prompt.trim(), alternate });
+  }
+  const missing = CARD_RANKS.filter(r => !byRank.has(r));
+  if (unusable.length) console.warn(`${MODULE_ID} | content/${seasonKey}.json: ${unusable.join("; ")}.`);
+  if (missing.length) console.warn(`${MODULE_ID} | content/${seasonKey}.json is missing ${missing.join(", ")}; those cards will be created without their text.`);
+  if (unusable.length || missing.length) {
+    // Reported separately: a duplicated or unknown rank can leave every card
+    // filled, and saying "0 of 13 cards have no text" would contradict itself
+    // and point away from the entry that is actually wrong.
+    const parts = [];
+    if (missing.length) parts.push(`${missing.length} of ${CARD_RANKS.length} cards have no text`);
+    if (unusable.length) parts.push(`${unusable.length} entr${unusable.length > 1 ? "ies" : "y"} could not be used`);
+    ui.notifications.warn(`Quiet Year: content/${seasonKey}.json — ${parts.join(", ")}. See console for details.`);
+  }
+  return byRank;
+}
+
+// The content files hold plain text, not markup — an owner transcribing from
+// their own copy should not have to think about what an `&` does — so it is
+// escaped on the way into the card's HTML description.
+function escapeText(text) {
+  const holder = document.createElement("div");
+  holder.textContent = text;
+  return holder.innerHTML;
+}
+
+function cardDescription(entry) {
+  if (!entry?.prompt) return "";
+  const blocks = [`<p>${escapeText(entry.prompt)}</p>`];
+  if (entry.alternate) blocks.push(`<hr><p><em>or…</em></p><p>${escapeText(entry.alternate)}</p>`);
   return blocks.join("");
 }
 
-function makeCardSource(rank, season) {
-  const [r, first, second] = rank;
-  const rankValue = { A: 1, J: 11, Q: 12, K: 13 }[r] ?? Number(r);
+// `entry` is undefined for a rank the content files do not cover, which yields
+// a card that is structurally a card — right rank, suit, value and back — and
+// simply carries no prompt.
+function makeCardSource(rank, season, entry) {
+  const rankValue = { A: 1, J: 11, Q: 12, K: 13 }[rank] ?? Number(rank);
   return {
-    name: `${r}${season.suit}`,
-    description: cardDescription(first, second),
+    name: `${rank}${season.suit}`,
+    description: cardDescription(entry),
     suit: season.suitName,
     value: rankValue,
-    faces: [{ name: `${r}${season.suit}` }],
+    faces: [{ name: `${rank}${season.suit}` }],
     back: { name: season.name },
     face: 0,
     drawn: false,
-    flags: { [MODULE_ID]: { season: season.suitName, rank: r } }
+    flags: { [MODULE_ID]: { season: season.suitName, rank } }
   };
 }
 
@@ -143,11 +186,15 @@ async function ensureDeck(seasonKey) {
     return existing;
   }
 
+  const byRank = await seasonCards(seasonKey);
+  if (byRank === "unreadable") {
+    throw new Error(`content/${seasonKey}.json could not be read, so no deck was created — a deck built without its text now could never be given it, since a deck that exists is never rewritten`);
+  }
   return Cards.create({
     name: season.name,
     type: "deck",
     description: `<p>${season.suitName} — ${season.name.replace("Quiet Year — ", "")}</p><p>Shuffle this seasonal deck before use.</p>`,
-    cards: season.cards.map(c => makeCardSource(c, season)),
+    cards: CARD_RANKS.map(rank => makeCardSource(rank, season, byRank?.get(rank))),
     displayCount: true,
     ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER },
     flags: { [MODULE_ID]: { season: seasonKey, createdByKit: true } }
@@ -203,9 +250,14 @@ function contentFingerprint(html) {
 // here at that moment. So: add the new fingerprint whenever the text changes,
 // and never take one away.
 const SHIPPED_FINGERPRINTS = {
+  // The rules summary now comes from content/rules.html and so differs from
+  // world to world; these are the versions the module itself has put on the
+  // page, which is what lets a repair run recognise one as its own and replace
+  // it with the owner's file.
   rules: [
-    "uiyu9i", // the original text, which opened with an <h1> of its own
-    "13nbb4i" // the text as it stands
+    "uiyu9i",  // the original text, which opened with an <h1> of its own
+    "13nbb4i", // the summary as the module last shipped it, before the text moved to content/
+    "1d1dnsj"  // RULES_PLACEHOLDER — the stand-in written when there is no content/rules.html
   ],
   // The workbook is rewritten only where it still holds one of these, which is
   // what tells a page nobody has touched from one the table has filled in — so
@@ -234,13 +286,34 @@ const SHIPPED_FINGERPRINTS = {
 //
 // The page is updated in place rather than replaced, so links and bookmarks to
 // it survive.
+// `cleanHTML` is the same sanitizer the server runs the content through, so
+// fingerprinting its output predicts what will actually be stored — where
+// fingerprinting the raw string does not, and would stamp a page the kit just
+// wrote with a hash of text that no longer exists anywhere.
+function predictedFingerprint(html) {
+  const cleaned = foundry.utils.cleanHTML?.(html) ?? html;
+  return contentFingerprint(cleaned);
+}
+
+// The prediction is close but not exact for every input, and the text is now
+// the owner's rather than the module's, so it is checked against what the
+// document ended up holding and corrected if it differs. Without this a
+// `rules.html` carrying anything the sanitizer rewrites — a pasted `<font>`,
+// an attribute it strips — would latch the page as "edited by hand" the moment
+// the kit wrote it, and no amount of repairing could ever unstick it.
+async function stampFingerprint(page, key) {
+  const actual = contentFingerprint(page?.text?.content || "");
+  if (!page || page.getFlag(MODULE_ID, "contentFingerprint") === actual) return;
+  await applyUpdate(page, { [`flags.${MODULE_ID}.contentFingerprint`]: actual }, `${key} journal page fingerprint`);
+}
+
 function journalPageSource(pageName, key, html) {
   return {
     name: pageName,
     type: "text",
     text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: html },
     ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER },
-    flags: { [MODULE_ID]: { key, contentFingerprint: contentFingerprint(html) } }
+    flags: { [MODULE_ID]: { key, contentFingerprint: predictedFingerprint(html), sourceFingerprint: contentFingerprint(html) } }
   };
 }
 
@@ -255,12 +328,15 @@ function journalPageSource(pageName, key, html) {
 // journal's own name and stack a title against the sheet's, and updating their
 // text without their name would leave that half-fixed.
 async function writeJournalPage(page, pageName, key, html) {
-  return applyUpdate(page, {
+  const written = await applyUpdate(page, {
     name: pageName,
     "text.content": html,
     [`flags.${MODULE_ID}.key`]: key,
-    [`flags.${MODULE_ID}.contentFingerprint`]: contentFingerprint(html)
+    [`flags.${MODULE_ID}.contentFingerprint`]: predictedFingerprint(html),
+    [`flags.${MODULE_ID}.sourceFingerprint`]: contentFingerprint(html)
   }, `${key} journal page`);
+  if (written) await stampFingerprint(page, key);
+  return written;
 }
 
 // The page the kit wrote, or nothing. Its flag names it outright; a journal
@@ -304,10 +380,18 @@ function kitJournalPage(journal, key, pageName, journalName) {
 // bar and once as the page heading. Giving the page its own shorter name keeps
 // the second line from restating the first — and the page HTML opens straight
 // into content rather than a third heading of its own.
-async function ensureJournal(name, pageName, key, html, { reconcile = false } = {}) {
+async function ensureJournal(name, pageName, key, html, { reconcile = false, createOnly = false } = {}) {
   let journal = game.journal.find(j => j.getFlag(MODULE_ID, "key") === key);
   if (journal) {
     const page = kitJournalPage(journal, key, pageName, name);
+    // `createOnly` is what the caller passes when the text it is holding is a
+    // stand-in rather than the real thing — the rules journal with no
+    // content/rules.html to read. A page that is already there then stays
+    // exactly as it is, because overwriting a world's real rules text with a
+    // note explaining where to put a file would destroy the very thing the
+    // note is asking for. A page that has gone is still put back, since a
+    // stand-in beats nothing.
+    if (page && createOnly) return { journal, status: "kept" };
     if (!page) {
       // Putting back a page that has gone is what a repair run is for, and it
       // adds rather than replaces, so reference text goes back beside whatever
@@ -330,9 +414,18 @@ async function ensureJournal(name, pageName, key, html, { reconcile = false } = 
       // would be telling the GM something they can see is not true.
       return { journal, status: hadPages ? "added" : "restored" };
     }
+    // Two different questions, and they need two different hashes. "Has anyone
+    // written in this page?" compares the stored *content* against the flag
+    // stamped from it. "Is the page already holding this source text?" compares
+    // the *source* against a flag recording the source it was last written
+    // from. Answering the second with the first asks whether the sanitized text
+    // equals the text that was sent — which for any source the sanitizer
+    // rewrites is never true, so every repair run would write the page again
+    // and announce it had brought it up to date.
     const wanted = contentFingerprint(html);
     const actual = contentFingerprint(page.text?.content || "");
     const stored = page.getFlag(MODULE_ID, "contentFingerprint");
+    const source = page.getFlag(MODULE_ID, "sourceFingerprint");
     // Only a name the kit gave the page is reconciled — the one it uses now, or
     // the journal's, from before the two were separated. A name the GM chose
     // is theirs, and renaming it back on every repair run would be the kit
@@ -350,13 +443,16 @@ async function ensureJournal(name, pageName, key, html, { reconcile = false } = 
     // cannot vouch for is simply left, and not reported as edited — being
     // written in is what it is for.
     if (!ours) return { journal, status: reconcile ? "edited" : "kept" };
-    if (actual === wanted) {
+    // A page written before the source flag existed has none, and its content
+    // is then the only evidence of what it was written from.
+    const current = source ? source === wanted : actual === wanted;
+    if (current) {
       // Already the current text. A page from before the fingerprints carries
       // nothing saying so, so stamp it and spare the next run the deduction —
       // but that stamp is bookkeeping. If it is refused the journal is still
       // right, and failing the install over it would leave the GM re-prompted
       // on every world load with nothing actually wrong.
-      if (stored !== wanted || rename) await writeJournalPage(page, targetName, key, html);
+      if (!source || stored !== actual || rename) await writeJournalPage(page, targetName, key, html);
       return { journal, status: "current" };
     }
     // Reached for the workbook too: a page still holding a version the kit
@@ -1702,8 +1798,23 @@ function registerSidebarTab() {
   };
 }
 
-const rulesHtml = `
-<p>The Quiet Year is by Avery Alder, published by Buried Without Ceremony. Its text is not this module’s to carry. Put your own transcription in content/rules.html.</p>`;
+// The rules summary is the game's text, so it lives in content/rules.html and
+// not here. When that file is absent the journal is still created, holding
+// this note instead — the kit's own writing, which is why its fingerprint
+// belongs in SHIPPED_FINGERPRINTS: once the owner drops the file in, a repair
+// run recognises this page as the kit's and replaces it.
+const RULES_PLACEHOLDER = `
+<p><strong>This journal is waiting for its text.</strong></p>
+<p>The Quiet Year's turn structure and action summary are not shipped with this module. To fill this page in, create <code>content/rules.html</code> inside the module folder and write the summary there from your own copy of the game, then run <strong>Quiet Year: Install / Repair Kit</strong> again.</p>
+<p>The format is described in <code>content/README.md</code>. Everything else the kit installs — the decks, the play surface, the sector setup workbook — works without it.</p>`;
+
+// An unreadable rules.html is treated as absent, which is safe: the stand-in is
+// only ever *created*, never written over a page that already has text.
+async function rulesText() {
+  const content = await readContent("rules.html");
+  if (content.status !== "present") return null;
+  return content.text.trim() || null;
+}
 
 const setupHtml = `
 <p>This kit keeps the published card prompts intact and changes only the camera scale: the shared map represents <strong>Cobalt Reach as a sector</strong>.</p>
@@ -1766,6 +1877,22 @@ async function installKit() {
   if (!game.user.isGM) return ui.notifications.warn("Only a GM can install the Quiet Year kit into the world.");
 
   ui.notifications.info("Quiet Year: creating or repairing world resources…");
+
+  // Said once, up front, naming every file and where it goes — rather than one
+  // complaint per deck as each install step trips over the same absence.
+  // Re-read from disk every run, so the remedy the installer prints — add the
+  // file, repair again — works in the session that printed it.
+  forgetContent();
+  const { absent, unreadable } = await contentReport();
+  if (absent.length) {
+    console.warn(`${MODULE_ID} | No content for ${absent.join(", ")}. Put them in modules/${MODULE_ID}/content/ — the format is in content/README.md. Cards without text are still created with their rank and suit.`);
+    ui.notifications.warn(`Quiet Year: ${absent.length} content file${absent.length > 1 ? "s are" : " is"} missing (${absent.join(", ")}). The kit installs without the game's text — see content/README.md.`);
+  }
+  if (unreadable.length) {
+    ui.notifications.error(`Quiet Year: ${unreadable.join(", ")} could not be read — this is not the same as missing, and the file may well be there. See console. Decks for those seasons were not created rather than created empty.`);
+  }
+  const wantedRules = await rulesText();
+
   const decks = [];
   for (const seasonKey of ["spring", "summer", "autumn", "winter"]) {
     try {
@@ -1777,7 +1904,8 @@ async function installKit() {
       ui.notifications.error(`Quiet Year: failed to create ${seasonKey} deck. See console for details.`);
     }
   }
-  const rules = await ensureJournalPart("rules", "Quiet Year — Rules & Turn Summary", "Table Reference", "rules", rulesHtml, { reconcile: true });
+  const rules = await ensureJournalPart("rules", "Quiet Year — Rules & Turn Summary", "Table Reference", "rules",
+    wantedRules ?? RULES_PLACEHOLDER, { reconcile: true, createOnly: !wantedRules });
   const setup = await ensureJournalPart("setup", "Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
   const scene = await ensurePart("Cobalt Reach scene", () => ensureScene());
   const macro = await ensurePart("Install / Repair macro", () => ensureMacro("installer"));
@@ -1857,14 +1985,21 @@ Hooks.once("ready", async () => {
   registerRealtimeHooks();
   if (!game.user.isGM) return;
   // The fingerprints can tell an edited page from a pristine one, but not that
-  // someone changed rulesHtml and forgot to list the text it replaced — which
-  // would report every world still holding that text as hand-edited.
+  // someone changed one of these constants and forgot to list the text it
+  // replaced — which would report every world still holding that text as
+  // hand-edited.
   // Only half the invariant can be checked: that the text as it stands is
   // listed. Nothing records how many versions have shipped, so a maintainer who
   // replaces the outgoing entry instead of appending to it passes this
   // silently — and every world still holding that text is then taken for
   // someone's own writing. The list only grows; see AGENTS.md.
-  for (const [key, html] of [["rules", rulesHtml], ["setup", setupHtml]]) {
+  //
+  // The rules summary itself is no longer checkable here: it comes from
+  // content/rules.html, which differs from world to world and is the owner's
+  // to write. What is checked is the stand-in page the kit puts there when
+  // that file is absent, which must stay recognisable as the kit's own so it
+  // can be replaced once the file appears.
+  for (const [key, html] of [["rules", RULES_PLACEHOLDER], ["setup", setupHtml]]) {
     if (SHIPPED_FINGERPRINTS[key].includes(contentFingerprint(html))) continue;
     console.warn(`${MODULE_ID} | ${key} journal text has changed without ${contentFingerprint(html)} being added to SHIPPED_FINGERPRINTS. Worlds holding the previous text will be taken for someone's own writing.`);
   }

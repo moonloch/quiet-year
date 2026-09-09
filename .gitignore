@@ -1,1 +1,7 @@
 .DS_Store
+
+# The Quiet Year's own text is not this repository's to carry. The owner drops
+# their transcription in here from their own copy; a populated content/ must
+# never be committed. Only the format documentation is tracked.
+/content/*
+!/content/README.md

@@ -2,7 +2,7 @@
   "id": "quiet-year",
   "title": "Quiet Year — Cobalt Reach Kit",
   "description": "A lightweight, system-agnostic Foundry VTT v14 helper for running The Quiet Year inside an existing world. Includes the four seasonal decks, reference journals, Cobalt Reach scene, and a floating play surface for weeks, projects, resources, and Contempt.",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "authors": [
     {
       "name": "Doyce / ChatGPT-assisted personal-use build"
