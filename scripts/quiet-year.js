@@ -1,4 +1,4 @@
-const MODULE_ID = "quiet-year-cobalt";
+const MODULE_ID = "quiet-year";
 
 const SEASONS = {
   spring: {

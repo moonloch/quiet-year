@@ -15,11 +15,11 @@ When enabled, the GM can install the kit into the current world. It creates:
 - **Quiet Year — Cobalt Reach** blank gridless collaborative Scene
 - **Quiet Year: Install / Repair Kit** macro
 
-All created documents are tagged with the module flag `quiet-year-cobalt` so the installer can find them without relying on names alone.
+All created documents are tagged with the module flag `quiet-year` so the installer can find them without relying on names alone.
 
 ## Install
 
-1. Copy the entire `quiet-year-cobalt` folder into your Foundry user-data `Data/modules/` directory.
+1. Copy the entire `quiet-year` folder into your Foundry user-data `Data/modules/` directory.
 2. Restart Foundry.
 3. Open the existing Starforged world.
 4. Enable **Quiet Year — Cobalt Reach Kit** under Manage Modules.
