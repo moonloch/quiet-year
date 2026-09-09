@@ -1354,7 +1354,12 @@ class QuietYearPlaySurface extends Application {
       id: "quiet-year-cobalt-play-surface",
       title: "The Quiet Year",
       template: `modules/${MODULE_ID}/templates/play-surface.html`,
-      width: 460,
+      // Two columns of sections, so wide rather than tall: a 1fr 1fr split of
+      // 460px left neither side usable. The height stays where it was, which
+      // fits a laptop window — the surface floats free of the sidebar, so
+      // nothing else bounds it. Dragged narrower than the stylesheet's
+      // container breakpoint, the layout collapses back to one column.
+      width: 880,
       height: 720,
       resizable: true,
       classes: ["quiet-year-cobalt", "play-surface"]
