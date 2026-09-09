@@ -1597,6 +1597,22 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     // step left to get wrong: an in-place field writes when it loses focus or
     // takes an Enter, and the add and remove buttons write outright.
     const commitField = (input, write) => {
+      // A render swaps the part out from under the focused field, and the browser
+      // fires blur on it on the way. That is not someone leaving the field, and
+      // committing on it is actively wrong: _renderedValues is still the baseline
+      // from before the render, so a draft that the incoming render disagrees with
+      // reads as an edit worth saving and gets written straight back over the
+      // value that render was carrying — another client's rename, undone by a
+      // keystroke nobody finished. Leave it alone: _preSyncPartState has the draft
+      // already and _restoreDrafts decides its fate against the new baseline a
+      // moment later, keeping it dirty if it survives.
+      //
+      // RENDERING is the test rather than the field being detached, because Chrome
+      // fires this blur while the element is still connected. It is only ever set
+      // between _renderHTML and the swap, which no human can blur into; closing the
+      // window tears the field out with the surface already CLOSING, so the commit
+      // people rely on when they type a name and shut the window still happens.
+      if (this.state === this.constructor.RENDER_STATES.RENDERING) return;
       if (input.value === this._renderedValues[input.name]) return this._clearDirty(input.name);
       this._clearDirty(input.name);
       write(input.value).catch(reportTrackerFailure);
