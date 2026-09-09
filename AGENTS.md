@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+This file provides guidance to coding agents when working with code in this repository.
 
 A personal-use Foundry VTT v14 module that runs *The Quiet Year* inside an existing world. Plain JavaScript loaded as a classic script — no build step, no bundler, no package.json.
 
