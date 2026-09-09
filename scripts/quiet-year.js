@@ -223,7 +223,13 @@ async function setState(state) {
 // plus one to three card updates) costs one render on every client.
 const refreshPlaySurface = foundry.utils.debounce(() => {
   const app = window.QuietYearCobalt?.app;
-  if (app?.rendered) app.render(false);
+  if (!app) return;
+  if (app.rendered) return void app.render(false);
+  // `rendered` is false for the whole duration of a render, so a change landing
+  // mid-render would otherwise be dropped and leave the surface stale until
+  // some unrelated change happened to fire. Record it instead; _render runs it
+  // once the in-flight render settles.
+  if (app._state === Application.RENDER_STATES.RENDERING) app._refreshPending = true;
 }, 100);
 
 function isKitDeck(stack) {
@@ -246,9 +252,14 @@ function registerRealtimeHooks() {
       if (isKitDeck(card?.parent)) refreshPlaySurface();
     });
   }
-  Hooks.on("updateCards", stack => {
-    if (isKitDeck(stack)) refreshPlaySurface();
-  });
+  // The stack hooks cover changes that fire no per-card hook at all: a seasonal
+  // deck being created by the installer on a client that already has the
+  // surface open, or one being deleted outright.
+  for (const hook of ["createCards", "updateCards", "deleteCards"]) {
+    Hooks.on(hook, stack => {
+      if (isKitDeck(stack)) refreshPlaySurface();
+    });
+  }
 }
 
 function getDeck(seasonKey) {
@@ -385,6 +396,13 @@ class QuietYearPlaySurface extends Application {
     // Names of fields the local user has typed into but not yet committed.
     // A refresh triggered by someone else must not wipe them out mid-sentence.
     this._dirtyFields = new Set();
+    // Field name -> the value the template produced at the most recent render,
+    // i.e. what world state says the field holds. Comparing the next render
+    // against this is how an uncommitted draft learns it has been overtaken.
+    this._renderedValues = {};
+    this._previousRenderedValues = {};
+    // Set when a refresh arrives while a render is already in flight.
+    this._refreshPending = false;
   }
 
   static get defaultOptions() {
@@ -400,11 +418,43 @@ class QuietYearPlaySurface extends Application {
   }
 
   // Re-renders can now arrive at any moment from another client, so carry
-  // uncommitted text and the caret across them.
+  // uncommitted text and the caret across them. This hooks _replaceHTML rather
+  // than _render because _render awaits getData and _renderInner before the
+  // swap: capturing there would snapshot the form, yield to the event loop, and
+  // then restore stale values over any keystroke typed in the gap. _replaceHTML
+  // runs synchronously around the swap, so nothing can be typed between the
+  // capture and the restore.
   async _render(force, options) {
-    const snapshot = this._captureFormState();
     await super._render(force, options);
+    if (this._refreshPending) {
+      this._refreshPending = false;
+      refreshPlaySurface();
+    }
+  }
+
+  _replaceHTML(element, html, options) {
+    const snapshot = this._captureFormState();
+    super._replaceHTML(element, html, options);
+    this._recordRenderedValues();
     this._restoreFormState(snapshot);
+  }
+
+  // The first render injects rather than replaces; seed the baseline there too,
+  // or the second render would read every field as newly changed.
+  _injectHTML(html, options) {
+    super._injectHTML(html, options);
+    this._recordRenderedValues();
+  }
+
+  // What world state says every field holds. Must run before any draft is
+  // written back over it.
+  _recordRenderedValues() {
+    const root = this.element?.[0];
+    if (!root) return;
+    const rendered = {};
+    for (const el of root.querySelectorAll("[name]")) rendered[el.name] = el.value;
+    this._previousRenderedValues = this._renderedValues;
+    this._renderedValues = rendered;
   }
 
   _captureFormState() {
@@ -431,13 +481,30 @@ class QuietYearPlaySurface extends Application {
   _restoreFormState(snapshot) {
     const root = this.element?.[0];
     if (!snapshot || !root) return;
+    const rendered = this._renderedValues;
+    const previous = this._previousRenderedValues;
     for (const [name, value] of Object.entries(snapshot.values)) {
       const el = root.querySelector(`[name="${name}"]`);
-      if (el && !el.disabled) el.value = value;
+      if (!el || el.disabled) continue;
+      // The authoritative value moved since the last render: someone committed
+      // to this field, or the year was reset. Their version wins, and the local
+      // draft stops being treated as dirty so it cannot be restored again — or
+      // read back out of the DOM by the next save.
+      if (rendered[name] !== previous[name]) {
+        this._dirtyFields.delete(name);
+        continue;
+      }
+      el.value = value;
     }
     if (!snapshot.focus) return;
     const el = root.querySelector(`[name="${snapshot.focus.name}"]`);
     if (!el || el.disabled) return;
+    // Swapping the HTML detaches the focused node, which parks focus on body.
+    // Anything else means focus is now somewhere the user put it — another app,
+    // Foundry's chat input — and pulling it back would send their keystrokes to
+    // the wrong field.
+    const active = document.activeElement;
+    if (active && active !== document.body && !root.contains(active)) return;
     el.focus();
     if (snapshot.focus.start === null) return;
     try {
