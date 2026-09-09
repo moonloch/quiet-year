@@ -20,7 +20,25 @@ When enabled, the GM can install the kit into the current world. It creates:
 
 All created documents are tagged with the module flag `quiet-year` so the installer can find them without relying on names alone. Re-running the installer repairs what is missing and never duplicates what is there.
 
-The decks and the rules journal take their text from `content/`. Without it the kit still installs and still runs: each deck is created with all thirteen cards in the right suit and rank order, simply without prompts, and the rules journal holds a note saying where to put the file. The installer names whatever is missing rather than failing.
+## Where the text comes from
+
+The card prompts and the rules summary are not in the module's source. They are read from five files you supply in `content/`, inside the installed module folder — `Data/modules/quiet-year/content/`. The format is documented in [`content/README.md`](content/README.md).
+
+The module fetches them over HTTP from Foundry's own static file server, at `modules/quiet-year/content/…`, so they have to sit inside the module directory to be reachable. Somewhere else in your user data will not do.
+
+They are read **only during an install or repair run**, never during play. What the run does is copy the text into the world's own deck and journal documents; from that point the world holds it and the files are not consulted again. Edit one afterwards and nothing changes until the next repair.
+
+Each run re-reads from disk rather than answering from the last run's results, so the remedy the installer prints — add the file, run **Quiet Year: Install / Repair Kit** again — works in the session that printed it. No restart, no browser reload.
+
+### Missing is not the same as unreadable
+
+**Missing** is the ordinary case for a file you have not transcribed yet, and is not an error. The kit installs and runs without it: the deck is created with all thirteen cards in the right suit and rank order, simply without prompt text, and the rules journal is created holding a note saying where to put the file. The installer names every file it could not find, once, up front.
+
+**Unreadable** — a permissions problem, a server error, anything that is not a plain 404 — is different in kind, because the file may well be sitting right there. For a season in that state **no deck is created at all**, deliberately. A deck that exists is never rewritten, so a textless deck built from a moment's read failure could never afterwards be given its text. The kit would rather create nothing and say so.
+
+A malformed deck file is reported against the file rather than quietly producing a deck that is short a card: invalid JSON, or no `cards` array, and nothing is taken from it. Individual entries that cannot be used — an unknown rank, a missing prompt, a rank appearing twice — are skipped and named in the console, and the ranks they leave unfilled are created without text.
+
+`rules.html` is only ever *created* from that stand-in note, never written over a page that already has text. The kit fingerprints what it writes, so a repair run can tell a page it last touched from one you have written in yourself, and leaves yours alone.
 
 ## Install
 
@@ -64,7 +82,7 @@ The rules support two players. For Cobalt Reach, the setup journal includes the 
 
 - This is a personal-use helper, not an official or distributable Quiet Year product.
 - The game's text is not distributed with this module. `content/` is gitignored, so a clone carries none of it, and the owner supplies their own transcription. The *Cobalt Reach — Quiet Year Setup* journal is original writing about sector-scale play and does live in the source.
-- A deck that already exists is never rewritten by a repair run, because its cards carry which have been drawn — the record of the year so far. To pick up new or corrected text for a season already installed, delete that deck and repair.
+- A deck that already exists is never rewritten by a repair run, because its cards carry which have been drawn — the record of the year so far. To pick up new or corrected text for a season already installed, delete that deck and repair. Corrected `rules.html` needs only the repair run.
 - The kit creates world documents rather than shipping binary LevelDB compendium packs. This makes it much easier to add directly to an already-running Starforged world. A later version can package the same source documents into true module compendia using Foundry's official CLI.
 
 ## Changelog
