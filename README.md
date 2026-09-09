@@ -1,6 +1,6 @@
-# Quiet Year — Cobalt Reach Kit (Foundry VTT v14)
+# Quiet Year FoundryVTT Module (Foundry VTT v14)
 
-Personal-use helper module for running *The Quiet Year* inside an existing Foundry world (including an Ironsworn: Starforged world).
+Personal-use helper module for running *The Quiet Year* inside an existing Foundry world.
 
 *The Quiet Year* is by Avery Alder, published by Buried Without Ceremony. **This repository contains none of the game's text.** The card prompts and the rules summary are read at install time from `content/`, which you fill in from your own copy — see [`content/README.md`](content/README.md) for the format. The module supplies only the machinery around them.
 
