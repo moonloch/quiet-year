@@ -221,6 +221,28 @@ async function setState(state) {
   refreshPlaySurface();
 }
 
+// A project is "active" until it either runs its die out (or is finished early)
+// or fails. Cancelled projects keep the weeks they had left, as the record of
+// where the work stood when it collapsed, so `weeks` alone cannot tell the
+// three apart.
+const PROJECT_STATUS_LABELS = { active: "", completed: "complete", cancelled: "failed" };
+
+// Games saved before `status` existed hold projects shaped
+// { id, name, weeks, completed }. getState() merges the stored array in whole
+// — mergeObject replaces arrays rather than recursing into them — so those
+// objects arrive exactly as they were written. Normalize on read instead, and
+// drop `completed` from any project this module writes so the two fields can
+// never disagree.
+function projectStatus(project) {
+  const status = project?.status;
+  if (Object.hasOwn(PROJECT_STATUS_LABELS, status ?? "")) return status;
+  return project?.completed ? "completed" : "active";
+}
+
+function activeProjects(state) {
+  return (state.projects || []).filter(p => projectStatus(p) === "active");
+}
+
 // Foundry broadcasts world settings and card updates to every client, but only
 // the acting client re-renders on its own. Every refresh — local or remote —
 // goes through this one debounced helper, so a single draw (a setting write
@@ -362,21 +384,59 @@ async function drawWeek() {
   }
 }
 
+// Project outcomes are beats worth the same permanent record as the drawn card,
+// and a notification only reaches the GM who happened to click.
+async function announceProjects(heading, names) {
+  await ChatMessage.create({
+    content: `<div class="quiet-year-chat-card"><h2>${heading}</h2><p>${names.map(n => foundry.utils.escapeHTML(n)).join("<br>")}</p></div>`,
+    speaker: { alias: "The Quiet Year" }
+  });
+}
+
 async function tickProjects() {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const state = getState();
   const completed = [];
-  for (const project of state.projects) {
-    if (!project.completed && Number(project.weeks) > 0) {
+  // Only active projects count down. A cancelled project still has weeks left
+  // on its die and would otherwise tick its way to zero and announce itself
+  // finished.
+  for (const project of activeProjects(state)) {
+    if (Number(project.weeks) > 0) {
       project.weeks = Math.max(0, Number(project.weeks) - 1);
       if (project.weeks === 0) {
-        project.completed = true;
+        project.status = "completed";
+        delete project.completed;
         completed.push(project.name);
       }
     }
   }
   await setState(state);
-  if (completed.length) ui.notifications.info(`Project${completed.length > 1 ? "s" : ""} complete: ${completed.join(", ")}`);
+  if (!completed.length) return;
+  ui.notifications.info(`Project${completed.length > 1 ? "s" : ""} complete: ${completed.join(", ")}`);
+  await announceProjects(`Project${completed.length > 1 ? "s" : ""} complete`, completed);
+}
+
+// The cards call for both of these constantly — "a project finishes early", "a
+// project fails" — and neither is Tick Projects, which moves every die at once.
+// A failed project is not a deleted one either: it stays on the surface as part
+// of the community's history.
+async function setProjectStatus(id, status) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
+  const state = getState();
+  const project = (state.projects || []).find(p => p.id === id);
+  // Another GM may have resolved or deleted this project between their write
+  // and this client's debounced re-render, leaving a stale button on screen.
+  // Say so rather than letting the click look like it did nothing.
+  if (!project) return ui.notifications.warn("That project is no longer on the tracker.");
+  if (projectStatus(project) !== "active") return ui.notifications.warn(`${project.name} is no longer underway.`);
+
+  project.status = status;
+  delete project.completed;
+  // Finishing zeroes the die; failing keeps whatever was left on it.
+  if (status === "completed") project.weeks = 0;
+  await setState(state);
+
+  await announceProjects(status === "completed" ? "Project finished early" : "Project failed", [project.name]);
 }
 
 async function resetYear() {
@@ -526,6 +586,20 @@ class QuietYearPlaySurface extends Application {
     return {
       isGM: game.user.isGM,
       state,
+      projects: (state.projects || []).map(project => {
+        const status = projectStatus(project);
+        return {
+          id: project.id,
+          name: project.name,
+          weeks: project.weeks,
+          status,
+          isActive: status === "active",
+          statusLabel: PROJECT_STATUS_LABELS[status]
+        };
+      }),
+      // Several cards branch on "if there are no projects underway", so the
+      // notice has to key off the active ones, not off an empty list.
+      hasActiveProjects: activeProjects(state).length > 0,
       seasonLabel: SEASON_LABELS[seasonKey],
       remaining: seasonRemaining(seasonKey),
       currentCard: state.currentCard,
@@ -567,10 +641,18 @@ class QuietYearPlaySurface extends Application {
       const weeks = Number(root.querySelector('[name="new-project-weeks"]')?.value || 1);
       if (!name) return ui.notifications.warn("Give the project a name.");
       const state = getState();
-      state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), completed: false });
+      state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
       this._clearDirty("new-project-name", "new-project-weeks");
       await setState(state);
     });
+
+    root.querySelectorAll('[data-project-finish]').forEach(el => el.addEventListener("click", ev => {
+      setProjectStatus(ev.currentTarget.dataset.projectFinish, "completed");
+    }));
+
+    root.querySelectorAll('[data-project-cancel]').forEach(el => el.addEventListener("click", ev => {
+      setProjectStatus(ev.currentTarget.dataset.projectCancel, "cancelled");
+    }));
 
     root.querySelectorAll('[data-project-remove]').forEach(el => el.addEventListener("click", async ev => {
       if (!game.user.isGM) return;
@@ -760,7 +842,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, resetYear, SEASONS, app: null };
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
   if (game.settings.get(MODULE_ID, "installed")) return;

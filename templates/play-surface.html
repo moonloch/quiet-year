@@ -24,16 +24,21 @@
   <section>
     <h2>Projects</h2>
     <div class="qyc-projects">
-      {{#each state.projects}}
-        <div class="qyc-project {{#if completed}}completed{{/if}}">
+      {{#each projects}}
+        <div class="qyc-project {{status}}">
           <span class="qyc-project-die">{{weeks}}</span>
           <span class="qyc-project-name">{{name}}</span>
-          {{#if completed}}<span class="qyc-complete">complete</span>{{/if}}
-          <button type="button" class="qyc-icon-button" data-project-remove="{{id}}" title="Remove project" {{#unless ../isGM}}disabled{{/unless}}><i class="fas fa-trash"></i></button>
+          <span class="qyc-project-controls">
+            {{#if statusLabel}}<span class="qyc-project-status">{{statusLabel}}</span>{{/if}}
+            {{#if isActive}}
+              <button type="button" class="qyc-icon-button" data-project-finish="{{id}}" title="Finishes early" {{#unless ../isGM}}disabled{{/unless}}><i class="fas fa-check"></i></button>
+              <button type="button" class="qyc-icon-button" data-project-cancel="{{id}}" title="Fails" {{#unless ../isGM}}disabled{{/unless}}><i class="fas fa-ban"></i></button>
+            {{/if}}
+            <button type="button" class="qyc-icon-button" data-project-remove="{{id}}" title="Delete project" {{#unless ../isGM}}disabled{{/unless}}><i class="fas fa-trash"></i></button>
+          </span>
         </div>
-      {{else}}
-        <p class="qyc-muted">No projects underway.</p>
       {{/each}}
+      {{#unless hasActiveProjects}}<p class="qyc-muted">No projects underway.</p>{{/unless}}
     </div>
     {{#if isGM}}
     <div class="qyc-add-project">
