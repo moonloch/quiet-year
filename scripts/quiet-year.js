@@ -128,7 +128,11 @@ async function ensureDeck(seasonKey) {
   });
 }
 
-async function ensureJournal(name, key, html) {
+// A single-page journal shows its name twice over: once in the sheet's title
+// bar and once as the page heading. Giving the page its own shorter name keeps
+// the second line from restating the first — and the page HTML opens straight
+// into content, since that heading is the <h1> the page already renders.
+async function ensureJournal(name, pageName, key, html) {
   let journal = game.journal.find(j => j.getFlag(MODULE_ID, "key") === key);
   if (journal) return journal;
   journal = await JournalEntry.create({
@@ -136,7 +140,7 @@ async function ensureJournal(name, key, html) {
     ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER },
     flags: { [MODULE_ID]: { key, createdByKit: true } },
     pages: [{
-      name,
+      name: pageName,
       type: "text",
       text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: html },
       ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER }
@@ -677,7 +681,6 @@ const rulesHtml = `
 <p>The Quiet Year is by Avery Alder, published by Buried Without Ceremony. Its text is not this module’s to carry. Put your own transcription in content/rules.html.</p>`;
 
 const setupHtml = `
-<h1>Cobalt Reach — Quiet Year Setup</h1>
 <p>This kit keeps the published card prompts intact and changes only the camera scale: the shared map represents <strong>Cobalt Reach as a sector</strong>.</p>
 <h2>Suggested interpretation</h2>
 <ul>
@@ -709,8 +712,8 @@ async function installKit() {
       ui.notifications.error(`Quiet Year: failed to create ${seasonKey} deck. See console for details.`);
     }
   }
-  const rules = await ensureJournal("Quiet Year — Rules & Turn Summary", "rules", rulesHtml);
-  const setup = await ensureJournal("Cobalt Reach — Quiet Year Setup", "setup", setupHtml);
+  const rules = await ensureJournal("Quiet Year — Rules & Turn Summary", "Table Reference", "rules", rulesHtml);
+  const setup = await ensureJournal("Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
   const scene = await ensureScene();
   const macro = await ensureMacro("installer");
   const playMacro = await ensureMacro("play");

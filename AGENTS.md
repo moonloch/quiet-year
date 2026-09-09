@@ -61,7 +61,9 @@ Everything lives in `scripts/quiet-year.js`, in four parts: the `SEASONS` card d
 
 **Core CSS is layered; ours is not.** Rules like `.tab[data-tab]:not(.active) { display: none }` live in a core `@layer`, and an unlayered module stylesheet outranks every layered rule regardless of specificity. An unconditional `display: flex` on a sidebar tab body would therefore show it underneath every other tab. Scope such rules to `.active` and to `.sidebar-popout .window-content`.
 
-`rulesHtml` in `scripts/quiet-year.js` is the only copy of the rules-journal text. A Foundry export of the same journal used to sit at the project root; it was byte-identical to the constant and carried world-specific fields (`folder`, page `_id`, `_stats` naming the `foundry-ironsworn` system and a `starforged` world), so it was removed rather than kept as a second copy that could drift. Note that editing the constant does not update a journal that already exists — `ensureJournal` returns early on a hit (issue #8).
+`rulesHtml` in `scripts/quiet-year.js` is the only copy of the rules-journal text. A Foundry export of the same journal used to sit at the project root; it was byte-identical to the constant and carried world-specific fields (`folder`, page `_id`, `_stats` naming the `foundry-ironsworn` system and a `starforged` world), so it was removed rather than kept as a second copy that could drift. Note that editing the constant does not update a journal that already exists — `ensureJournal` returns early on a hit (issue #8), so seeing a change means deleting the journal and re-running the installer.
+
+Both journal constants open straight into content with no `<h1>`. A single-page journal already renders two headings — the sheet's title bar carries the journal name and the page carries its own — so a third in the HTML just stacks up. `ensureJournal` takes the page name separately for the same reason: pass something shorter than the journal name rather than repeating it.
 
 ## Rules fidelity
 
