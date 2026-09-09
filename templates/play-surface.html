@@ -35,7 +35,7 @@
               {{/if}}
             {{/if}}
           </span>
-          <input type="text" class="qyc-project-name" name="{{field}}" value="{{name}}" title="{{name}}" data-project-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
+          <input type="text" class="qyc-inline-edit qyc-project-name" name="{{field}}" value="{{name}}" title="{{name}}" data-project-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
           <span class="qyc-project-controls">
             {{#if statusLabel}}<span class="qyc-project-status">{{statusLabel}}</span>{{/if}}
             {{#if isActive}}
@@ -50,7 +50,7 @@
     </div>
     {{#if isGM}}
     <div class="qyc-add-project">
-      <input type="text" name="new-project-name" placeholder="New project">
+      <input type="text" name="new-project-name" placeholder="New project" data-add-on-enter="[data-action='add-project']">
       <input type="number" name="new-project-weeks" min="1" max="6" value="3">
       <button type="button" data-action="add-project" title="Start a project"><i class="fas fa-plus"></i></button>
     </div>
@@ -67,8 +67,25 @@
   <section class="qyc-resources">
     <h2>Resources</h2>
     <div class="qyc-columns">
-      <label><strong>Abundances</strong><textarea name="abundances" rows="4" {{#unless isGM}}disabled{{/unless}}>{{abundancesText}}</textarea></label>
-      <label><strong>Scarcities</strong><textarea name="scarcities" rows="4" {{#unless isGM}}disabled{{/unless}}>{{scarcitiesText}}</textarea></label>
+      {{#each resources}}
+      <div class="qyc-resource-column">
+        <strong>{{label}}</strong>
+        {{#each entries}}
+          <div class="qyc-resource-row">
+            <input type="text" class="qyc-inline-edit" value="{{value}}" title="{{value}}" name="{{field}}" data-resource-edit="{{kind}}:{{index}}" data-resource-previous="{{value}}" {{#unless ../../isGM}}readonly{{/unless}}>
+            {{#if ../../isGM}}<button type="button" class="qyc-icon-button" data-resource-remove="{{kind}}:{{index}}" data-resource-previous="{{value}}" title="Remove {{value}}"><i class="fas fa-trash"></i></button>{{/if}}
+          </div>
+        {{else}}
+          <p class="qyc-muted">None yet.</p>
+        {{/each}}
+        {{#if ../isGM}}
+        <div class="qyc-resource-add">
+          <input type="text" name="{{newField}}" placeholder="{{placeholder}}" data-add-on-enter="[data-resource-add='{{kind}}']">
+          <button type="button" class="qyc-icon-button" data-resource-add="{{kind}}" title="{{placeholder}}"><i class="fas fa-plus"></i></button>
+        </div>
+        {{/if}}
+      </div>
+      {{/each}}
     </div>
   </section>
 
@@ -77,7 +94,7 @@
     <p class="qyc-muted">Take Contempt yourself rather than interrupting another player's turn.</p>
     {{#each contempt}}
       <div class="qyc-contempt-row">
-        <input type="text" name="{{field}}" value="{{name}}" {{#unless ../isGM}}disabled{{/unless}}>
+        <input type="text" class="qyc-inline-edit" name="{{field}}" value="{{name}}" title="{{name}}" data-contempt-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
         <button type="button" data-contempt="{{id}}:-1" title="Discard Contempt" {{#unless ../canAdjustContempt}}disabled{{/unless}}>−</button>
         <span class="qyc-contempt-count">{{count}}</span>
         <button type="button" data-contempt="{{id}}:1" title="Take Contempt" {{#unless ../canAdjustContempt}}disabled{{/unless}}>+</button>
@@ -85,10 +102,7 @@
       </div>
     {{/each}}
     {{#if isGM}}
-    <div class="qyc-contempt-actions">
-      <button type="button" data-action="add-contempt"><i class="fas fa-user-plus"></i> Add Player</button>
-      <button type="button" data-action="save-resources"><i class="fas fa-save"></i> Save Trackers</button>
-    </div>
+    <button type="button" class="qyc-add-player" data-action="add-contempt"><i class="fas fa-user-plus"></i> Add Player</button>
     {{/if}}
   </section>
 

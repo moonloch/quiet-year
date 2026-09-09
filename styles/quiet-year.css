@@ -24,14 +24,15 @@
    it has to read as failed at a glance rather than as merely finished. */
 .qyc-project.cancelled .qyc-project-die { border-style: dashed; }
 .qyc-project-die { width: 30px; height: 30px; border: 1px solid currentColor; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; font-weight: 800; }
-/* Editable in place, so it has to read as the project's name rather than as a
-   form field — the border only appears when you are working in it. Players get
-   it read-only rather than disabled: a name too long for the row can still be
-   focused and scrolled through, and the title attribute carries the whole of
-   it either way. */
-input.qyc-project-name { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; }
-input.qyc-project-name:hover:not(:read-only) { border-color: var(--color-border-light-2, #555); }
-input.qyc-project-name:read-only { color: inherit; opacity: 1; cursor: default; }
+/* Project names, resource entries and player names are all edited in place and
+   commit when they lose focus, so they read as their own text rather than as
+   form fields — the border only appears when you are working in one. Players
+   get them read-only rather than disabled: an entry too long for its row can
+   still be focused and scrolled through, and the title carries the whole of it
+   either way. */
+input.qyc-inline-edit { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; }
+input.qyc-inline-edit:hover:not(:read-only) { border-color: var(--color-border-light-2, #555); }
+input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project.cancelled input.qyc-project-name { text-decoration: line-through; }
 .qyc-project-status { font-size: .8em; font-style: italic; margin-right: 4px; }
 /* Badge and buttons share the last grid column, so the trash button stays flush
@@ -44,15 +45,16 @@ input.qyc-project-name:read-only { color: inherit; opacity: 1; cursor: default; 
 .qyc-add-project { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 8px; }
 .qyc-reduce-projects { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 5px; align-items: center; }
 .qyc-reduce-projects .qyc-muted { text-align: right; }
-.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.qyc-columns label { display: flex; flex-direction: column; gap: 4px; }
-.qyc-columns textarea { resize: vertical; min-height: 70px; }
+.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+.qyc-resource-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.qyc-resource-row { display: grid; grid-template-columns: 1fr 28px; gap: 4px; align-items: center; }
+.qyc-resource-add { display: grid; grid-template-columns: 1fr 28px; gap: 4px; margin-top: 3px; }
 /* The trailing column holds the GM's remove button and collapses to nothing on
    a player's client, where the row is not editable. */
 .qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px auto; gap: 5px; align-items: center; margin-bottom: 5px; }
 .qyc-contempt-count { text-align: center; font-size: 1.2em; font-weight: 800; }
 .qyc-contempt .qyc-muted { margin: 0 0 8px; }
-.qyc-contempt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-top: 8px; }
+.qyc-add-player { margin-top: 8px; }
 .qyc-footer { display: flex; flex-direction: column; gap: 6px; }
 .quiet-year-chat-card h2 { margin-bottom: 6px; }
 

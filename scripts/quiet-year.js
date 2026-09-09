@@ -582,6 +582,78 @@ const setProjectStatus = serialized(async function setProjectStatus(id, status) 
   await announceProjects(status === "completed" ? "Project finished early" : "Project failed", [project.name]);
 });
 
+// Roughly a dozen cards add or remove one of these — "a new Abundance", "this
+// becomes a Scarcity", "remove an Abundance" — so each entry is its own value
+// with its own controls rather than a line inside a textarea. The stored shape
+// is unchanged (a string array), so existing games carry over as they are.
+const RESOURCE_LISTS = { abundances: "Abundance", scarcities: "Scarcity" };
+
+// Entries are addressed by position, since a plain string has no id. The value
+// the row was drawn with comes along as a guard: if the list has shifted under
+// the surface, the entry is found by that instead of the stale position.
+function resourceIndex(list, index, previous) {
+  const at = Number(index);
+  const inRange = Number.isInteger(at) && at >= 0 && at < list.length;
+  // A caller with no value to hand — a macro, say — gets plain positional
+  // addressing rather than a search for `undefined` that always misses.
+  if (previous === undefined) return inRange ? at : -1;
+  if (inRange && list[at] === previous) return at;
+  // Two entries may hold the same string, so prefer the occurrence nearest the
+  // position the row was drawn at rather than always the first one.
+  let nearest = -1;
+  for (let i = 0; i < list.length; i++) {
+    if (list[i] !== previous) continue;
+    if (nearest < 0 || Math.abs(i - at) < Math.abs(nearest - at)) nearest = i;
+  }
+  return nearest;
+}
+
+const addResource = serialized(async function addResource(kind, value) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
+  if (!RESOURCE_LISTS[kind]) return;
+  const trimmed = String(value).trim();
+  if (!trimmed) return ui.notifications.warn(`Name the new ${RESOURCE_LISTS[kind]}.`);
+  const state = getState();
+  state[kind] = [...(state[kind] || []), trimmed];
+  await setState(state);
+});
+
+const renameResource = serialized(async function renameResource(kind, index, value, previous) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
+  if (!RESOURCE_LISTS[kind]) return;
+  const trimmed = String(value).trim();
+  // Blank is not a removal — there is a button for that — so the field goes
+  // back to what the world holds, as a project rename does.
+  if (!trimmed) {
+    ui.notifications.warn(`${RESOURCE_LISTS[kind]} entries need a name.`);
+    return refreshPlaySurface();
+  }
+  const state = getState();
+  const list = state[kind] || [];
+  const at = resourceIndex(list, index, previous);
+  if (at < 0) {
+    ui.notifications.warn(`That ${RESOURCE_LISTS[kind]} is no longer on the list.`);
+    return refreshPlaySurface();
+  }
+  if (list[at] === trimmed) return refreshPlaySurface();
+  list[at] = trimmed;
+  await setState(state);
+});
+
+const removeResource = serialized(async function removeResource(kind, index, previous) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
+  if (!RESOURCE_LISTS[kind]) return;
+  const state = getState();
+  const list = state[kind] || [];
+  const at = resourceIndex(list, index, previous);
+  if (at < 0) {
+    ui.notifications.warn(`That ${RESOURCE_LISTS[kind]} is no longer on the list.`);
+    return refreshPlaySurface();
+  }
+  list.splice(at, 1);
+  await setState(state);
+});
+
 // Contempt is the one tracker a player has to be able to work themselves. The
 // rules make it their own move — taken instead of interrupting someone's turn —
 // so making them interrupt and ask the GM to click for them defeats the point.
@@ -635,6 +707,21 @@ async function adjustContempt(id, delta) {
   }
   if (!applied) ui.notifications.warn("That Contempt row could not be adjusted — it may no longer be on the tracker.");
 }
+
+const renameContemptRow = serialized(async function renameContemptRow(id, name) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM keeps the player roster.");
+  const state = getState();
+  const index = contemptIndex(state, id);
+  if (index < 0) {
+    ui.notifications.warn("That Contempt row is no longer on the tracker.");
+    return refreshPlaySurface();
+  }
+  const trimmed = String(name).trim() || `Player ${index + 1}`;
+  if (state.contempt[index].name === trimmed) return refreshPlaySurface();
+  state.contempt[index].name = trimmed;
+  stampContemptIds(state);
+  await setState(state);
+});
 
 async function addContemptRow() {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the player roster.");
@@ -843,8 +930,14 @@ class QuietYearPlaySurface extends Application {
       currentCard: state.currentCard,
       hasCurrentCard: !!state.currentCard,
       gameOver: !!state.gameOver,
-      abundancesText: (state.abundances || []).join("\n"),
-      scarcitiesText: (state.scarcities || []).join("\n")
+      resources: Object.entries(RESOURCE_LISTS).map(([kind, label]) => ({
+        kind,
+        // The keys are already the plurals the columns are headed with.
+        label: kind.charAt(0).toUpperCase() + kind.slice(1),
+        placeholder: `New ${label.toLowerCase()}`,
+        newField: `new-${kind}`,
+        entries: (state[kind] || []).map((value, index) => ({ kind, value, index, field: `${kind}-${index}` }))
+      }))
     };
   }
 
@@ -865,35 +958,71 @@ class QuietYearPlaySurface extends Application {
     // render landing while the queue drains detaches it — a deferred read would
     // then take its values from a dead node, including drafts _restoreFormState
     // has already discarded in favour of someone else's committed value.
-    root.querySelector('[data-action="save-resources"]')?.addEventListener("click", () => {
-      if (!game.user.isGM) return;
-      const lines = selector => (root.querySelector(selector)?.value || "").split(/\n|,/).map(s => s.trim()).filter(Boolean);
-      const abundances = lines('[name="abundances"]');
-      const scarcities = lines('[name="scarcities"]');
-      // Taken from the fields that are on screen rather than from the stored
-      // rows, because the two can disagree: a row added elsewhere has no field
-      // here yet, and this render may predate the write that stamped a row's
-      // real id. Each field carries the id it was drawn with, and
-      // contemptIndex() resolves the older form.
-      const names = [...root.querySelectorAll('[name^="contempt-"][name$="-name"]')]
-        .map(input => ({ field: input.name, id: input.name.slice("contempt-".length, -"-name".length), value: input.value.trim() }));
-      this._clearDirty("abundances", "scarcities", ...names.map(n => n.field));
-      queueTrackerWrite(async () => {
-        const state = getState();
-        state.abundances = abundances;
-        state.scarcities = scarcities;
-        for (const { id, value } of names) {
-          const index = contemptIndex(state, id);
-          if (index < 0) continue;
-          state.contempt[index].name = value || `Player ${index + 1}`;
-        }
-        stampContemptIds(state);
-        await setState(state);
-        ui.notifications.info("Quiet Year trackers saved.");
-      }).catch(reportTrackerFailure);
+    // Everything on this surface now commits as it is edited, so there is no
+    // save step left to get wrong: an in-place field writes when it loses
+    // focus or takes an Enter, and the add and remove buttons write outright.
+    const commitField = (input, write) => {
+      if (input.value === this._renderedValues[input.name]) return this._clearDirty(input.name);
+      this._clearDirty(input.name);
+      write(input.value).catch(reportTrackerFailure);
+    };
+
+    // Not the `change` event: _restoreFormState writes a surviving draft back
+    // with `el.value = …`, which resets what the element believes it held at
+    // the last change. A name typed before a render from another client and
+    // blurred after it would fire no change event at all and be lost.
+    const commitOnBlur = (selector, write) => {
+      root.querySelectorAll(selector).forEach(el => {
+        el.addEventListener("blur", ev => commitField(ev.currentTarget, value => write(ev.currentTarget, value)));
+        el.addEventListener("keydown", ev => {
+          if (ev.key === "Enter") ev.currentTarget.blur();
+        });
+      });
+    };
+
+    commitOnBlur("[data-project-rename]", (el, value) => renameProject(el.dataset.projectRename, value));
+
+    commitOnBlur("[data-contempt-rename]", (el, value) => renameContemptRow(el.dataset.contemptRename, value));
+
+    commitOnBlur("[data-resource-edit]", (el, value) => {
+      const [kind, index] = el.dataset.resourceEdit.split(":");
+      return renameResource(kind, Number(index), value, el.dataset.resourcePrevious);
     });
 
-    // Read now, queue the write: see the note on Save Trackers above.
+    // Mousedown on the trash button blurs the row's field first, so an edit the
+    // GM never committed is already on its way through the queue by the time
+    // the removal runs — and both are serialized, so it lands first. Taking the
+    // guard value from the field as it stands now rather than from the render
+    // means the removal still finds the row it was pointed at.
+    root.querySelectorAll("[data-resource-remove]").forEach(el => el.addEventListener("click", ev => {
+      const button = ev.currentTarget;
+      const [kind, index] = button.dataset.resourceRemove.split(":");
+      const field = button.closest(".qyc-resource-row")?.querySelector("input");
+      const previous = field ? field.value.trim() : button.dataset.resourcePrevious;
+      removeResource(kind, Number(index), previous).catch(reportTrackerFailure);
+    }));
+
+    // Every other field here commits on Enter, so the add boxes do too.
+    root.querySelectorAll("[data-add-on-enter]").forEach(el => el.addEventListener("keydown", ev => {
+      if (ev.key !== "Enter") return;
+      ev.preventDefault();
+      root.querySelector(ev.currentTarget.dataset.addOnEnter)?.click();
+    }));
+
+    root.querySelectorAll("[data-resource-add]").forEach(el => el.addEventListener("click", ev => {
+      if (!game.user.isGM) return;
+      const kind = ev.currentTarget.dataset.resourceAdd;
+      const field = `new-${kind}`;
+      const input = root.querySelector(`[name="${field}"]`);
+      const value = input?.value ?? "";
+      this._clearDirty(field);
+      if (input) input.value = "";
+      addResource(kind, value).catch(reportTrackerFailure);
+    }));
+
+    // The form is read here, synchronously, and only the state change is
+    // queued: `root` belongs to this render, and a render landing while the
+    // queue drains detaches it.
     root.querySelector('[data-action="add-project"]')?.addEventListener("click", () => {
       if (!game.user.isGM) return;
       const name = root.querySelector('[name="new-project-name"]')?.value?.trim();
@@ -905,27 +1034,6 @@ class QuietYearPlaySurface extends Application {
         state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
         await setState(state);
       }).catch(reportTrackerFailure);
-    });
-
-    // Renames commit on blur and on Enter rather than from a save button, so
-    // the draft has to survive a render arriving mid-word like every other
-    // field, and stop counting as a draft once it is committed.
-    //
-    // Deliberately not the `change` event: _restoreFormState writes a surviving
-    // draft back with `el.value = …`, which resets the element's idea of what
-    // it held at the last change. A rename typed before that render and blurred
-    // after it would fire no change event at all and be quietly lost.
-    const commitRename = input => {
-      if (input.value === this._renderedValues[input.name]) return this._clearDirty(input.name);
-      this._clearDirty(input.name);
-      renameProject(input.dataset.projectRename, input.value).catch(reportTrackerFailure);
-    };
-
-    root.querySelectorAll("[data-project-rename]").forEach(el => {
-      el.addEventListener("blur", ev => commitRename(ev.currentTarget));
-      el.addEventListener("keydown", ev => {
-        if (ev.key === "Enter") ev.currentTarget.blur();
-      });
     });
 
     root.querySelectorAll("[data-project-weeks]").forEach(el => el.addEventListener("click", ev => {
@@ -1145,7 +1253,8 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, adjustContempt, SEASONS, app: null };
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, adjustContempt, renameContemptRow,
+    addResource, renameResource, removeResource, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
   await migrateContemptIds();
