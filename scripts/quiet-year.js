@@ -1,4 +1,4 @@
-const MODULE_ID = "quiet-year-cobalt";
+const MODULE_ID = "quiet-year";
 
 const SEASONS = {
   spring: {
@@ -214,7 +214,52 @@ function getState() {
 
 async function setState(state) {
   await game.settings.set(MODULE_ID, "state", state);
-  if (window.QuietYearCobalt?.app?.rendered) window.QuietYearCobalt.app.render(false);
+  refreshPlaySurface();
+}
+
+// Foundry broadcasts world settings and card updates to every client, but only
+// the acting client re-renders on its own. Every refresh — local or remote —
+// goes through this one debounced helper, so a single draw (a setting write
+// plus one to three card updates) costs one render on every client.
+const refreshPlaySurface = foundry.utils.debounce(() => {
+  const app = window.QuietYearCobalt?.app;
+  if (!app) return;
+  if (app.rendered) return void app.render(false);
+  // `rendered` is false for the whole duration of a render, so a change landing
+  // mid-render would otherwise be dropped and leave the surface stale until
+  // some unrelated change happened to fire. Record it instead; _render runs it
+  // once the in-flight render settles.
+  if (app._state === Application.RENDER_STATES.RENDERING) app._refreshPending = true;
+}, 100);
+
+function isKitDeck(stack) {
+  return !!stack && SEASON_ORDER.includes(stack.getFlag(MODULE_ID, "season"));
+}
+
+function registerRealtimeHooks() {
+  // State changes arrive through the setting's own onChange callback, which
+  // Foundry fires on every client. onChange is not called when the Setting
+  // document is deleted outright, so that one case is hooked here to keep the
+  // surface from showing state that no longer exists.
+  Hooks.on("deleteSetting", setting => {
+    if (setting?.key === `${MODULE_ID}.state`) refreshPlaySurface();
+  });
+  // The card hooks cover the season card counter, which is derived from the
+  // decks' drawn flags rather than from module state and so travels as its own
+  // document update.
+  for (const hook of ["createCard", "updateCard", "deleteCard"]) {
+    Hooks.on(hook, card => {
+      if (isKitDeck(card?.parent)) refreshPlaySurface();
+    });
+  }
+  // The stack hooks cover changes that fire no per-card hook at all: a seasonal
+  // deck being created by the installer on a client that already has the
+  // surface open, or one being deleted outright.
+  for (const hook of ["createCards", "updateCards", "deleteCards"]) {
+    Hooks.on(hook, stack => {
+      if (isKitDeck(stack)) refreshPlaySurface();
+    });
+  }
 }
 
 function getDeck(seasonKey) {
@@ -346,6 +391,20 @@ async function resetYear() {
 }
 
 class QuietYearPlaySurface extends Application {
+  constructor(...args) {
+    super(...args);
+    // Names of fields the local user has typed into but not yet committed.
+    // A refresh triggered by someone else must not wipe them out mid-sentence.
+    this._dirtyFields = new Set();
+    // Field name -> the value the template produced at the most recent render,
+    // i.e. what world state says the field holds. Comparing the next render
+    // against this is how an uncommitted draft learns it has been overtaken.
+    this._renderedValues = {};
+    this._previousRenderedValues = {};
+    // Set when a refresh arrives while a render is already in flight.
+    this._refreshPending = false;
+  }
+
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "quiet-year-cobalt-play-surface",
@@ -356,6 +415,105 @@ class QuietYearPlaySurface extends Application {
       resizable: true,
       classes: ["quiet-year-cobalt", "play-surface"]
     });
+  }
+
+  // Re-renders can now arrive at any moment from another client, so carry
+  // uncommitted text and the caret across them. This hooks _replaceHTML rather
+  // than _render because _render awaits getData and _renderInner before the
+  // swap: capturing there would snapshot the form, yield to the event loop, and
+  // then restore stale values over any keystroke typed in the gap. _replaceHTML
+  // runs synchronously around the swap, so nothing can be typed between the
+  // capture and the restore.
+  async _render(force, options) {
+    await super._render(force, options);
+    if (this._refreshPending) {
+      this._refreshPending = false;
+      refreshPlaySurface();
+    }
+  }
+
+  _replaceHTML(element, html, options) {
+    const snapshot = this._captureFormState();
+    super._replaceHTML(element, html, options);
+    this._recordRenderedValues();
+    this._restoreFormState(snapshot);
+  }
+
+  // The first render injects rather than replaces; seed the baseline there too,
+  // or the second render would read every field as newly changed.
+  _injectHTML(html, options) {
+    super._injectHTML(html, options);
+    this._recordRenderedValues();
+  }
+
+  // What world state says every field holds. Must run before any draft is
+  // written back over it.
+  _recordRenderedValues() {
+    const root = this.element?.[0];
+    if (!root) return;
+    const rendered = {};
+    for (const el of root.querySelectorAll("[name]")) rendered[el.name] = el.value;
+    this._previousRenderedValues = this._renderedValues;
+    this._renderedValues = rendered;
+  }
+
+  _captureFormState() {
+    const root = this.element?.[0];
+    if (!root) return null;
+    const values = {};
+    for (const name of this._dirtyFields) {
+      const el = root.querySelector(`[name="${name}"]`);
+      if (el) values[name] = el.value;
+    }
+    const active = document.activeElement;
+    let focus = null;
+    if (active?.name && root.contains(active)) {
+      focus = { name: active.name, start: null, end: null };
+      // Number inputs throw on selection access in some browsers.
+      try {
+        focus.start = active.selectionStart;
+        focus.end = active.selectionEnd;
+      } catch (_err) { /* caret position is a nicety, not a requirement */ }
+    }
+    return { values, focus };
+  }
+
+  _restoreFormState(snapshot) {
+    const root = this.element?.[0];
+    if (!snapshot || !root) return;
+    const rendered = this._renderedValues;
+    const previous = this._previousRenderedValues;
+    for (const [name, value] of Object.entries(snapshot.values)) {
+      const el = root.querySelector(`[name="${name}"]`);
+      if (!el || el.disabled) continue;
+      // The authoritative value moved since the last render: someone committed
+      // to this field, or the year was reset. Their version wins, and the local
+      // draft stops being treated as dirty so it cannot be restored again — or
+      // read back out of the DOM by the next save.
+      if (rendered[name] !== previous[name]) {
+        this._dirtyFields.delete(name);
+        continue;
+      }
+      el.value = value;
+    }
+    if (!snapshot.focus) return;
+    const el = root.querySelector(`[name="${snapshot.focus.name}"]`);
+    if (!el || el.disabled) return;
+    // Swapping the HTML detaches the focused node, which parks focus on body.
+    // Anything else means focus is now somewhere the user put it — another app,
+    // Foundry's chat input — and pulling it back would send their keystrokes to
+    // the wrong field.
+    const active = document.activeElement;
+    if (active && active !== document.body && !root.contains(active)) return;
+    el.focus();
+    if (snapshot.focus.start === null) return;
+    try {
+      el.setSelectionRange(snapshot.focus.start, snapshot.focus.end);
+    } catch (_err) { /* see above */ }
+  }
+
+  _clearDirty(...names) {
+    for (const name of names) this._dirtyFields.delete(name);
   }
 
   getData() {
@@ -377,6 +535,11 @@ class QuietYearPlaySurface extends Application {
   activateListeners(html) {
     super.activateListeners(html);
     const root = html[0] ?? html;
+
+    root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
+      if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
+    });
+
     root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek());
     root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects());
     root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear());
@@ -389,6 +552,7 @@ class QuietYearPlaySurface extends Application {
       state.scarcities = lines('[name="scarcities"]');
       state.contempt[0].name = root.querySelector('[name="player0-name"]')?.value?.trim() || "Player 1";
       state.contempt[1].name = root.querySelector('[name="player1-name"]')?.value?.trim() || "Player 2";
+      this._clearDirty("abundances", "scarcities", "player0-name", "player1-name");
       await setState(state);
       ui.notifications.info("Quiet Year trackers saved.");
     });
@@ -400,6 +564,7 @@ class QuietYearPlaySurface extends Application {
       if (!name) return ui.notifications.warn("Give the project a name.");
       const state = getState();
       state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), completed: false });
+      this._clearDirty("new-project-name", "new-project-weeks");
       await setState(state);
     });
 
@@ -501,12 +666,16 @@ Hooks.once("init", () => {
     scope: "world",
     config: false,
     type: Object,
-    default: freshState()
+    default: freshState(),
+    // Fires on every client that receives the change, which is what keeps
+    // remote play surfaces in step with the GM.
+    onChange: () => refreshPlaySurface()
   });
 });
 
 Hooks.once("ready", async () => {
   window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, resetYear, SEASONS, app: null };
+  registerRealtimeHooks();
   if (!game.user.isGM) return;
   if (game.settings.get(MODULE_ID, "installed")) return;
 
