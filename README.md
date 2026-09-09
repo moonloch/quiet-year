@@ -85,7 +85,21 @@ The rules support two players. For Cobalt Reach, the setup journal includes the 
 - A deck that already exists is never rewritten by a repair run, because its cards carry which have been drawn — the record of the year so far. To pick up new or corrected text for a season already installed, delete that deck and repair. Corrected `rules.html` needs only the repair run.
 - The kit creates world documents rather than shipping binary LevelDB compendium packs. This makes it much easier to add directly to a world that is already running. A later version can package the same source documents into true module compendia using Foundry's official CLI.
 
+## License and credits
+
+*The Quiet Year* is designed and written by **Avery Alder** and published by **Buried Without Ceremony** — [buriedwithoutceremony.com/the-quiet-year](https://buriedwithoutceremony.com/the-quiet-year). Illustrations in the book are by Ariel Norris, with design insights from Jackson Tegu.
+
+The rulebook states no license, and neither the publisher's site nor its itch.io listing grants one, so the game's text is all rights reserved and is not this project's to redistribute. That is why the module carries none of it: the card prompts and the rules summary are yours to supply in `content/`, transcribed from your own copy. If you do not own the game, buy it from the publisher — this module is no substitute for the rulebook.
+
+The module's own code and documentation — the installer, the decks and journals it builds, the play surface, the tracker and its live sync — are MIT licensed. See [`LICENSE`](LICENSE).
+
+This is an unofficial, AI-assisted personal-use helper. It is not affiliated with, endorsed by, or connected to Avery Alder or Buried Without Ceremony.
+
 ## Changelog
+
+### 0.4.1
+- A `LICENSE` (MIT) covering the module's own code, and credit to Avery Alder and Buried Without Ceremony in the README, `module.json`, and both journals the kit installs.
+- The rules journal names the game and its publisher whether or not you supply `content/rules.html`: the kit appends its own credit line below your text, so a fully set-up world still credits the game.
 
 ### 0.4.0
 - The card prompts and rules summary moved out of the module source into `content/`, which is gitignored and filled in by the owner from their own copy. The repository no longer contains the game's text.
