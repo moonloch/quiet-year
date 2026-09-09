@@ -12,6 +12,9 @@
       <button type="button" data-action="draw" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-clone"></i> Draw Week</button>
       <button type="button" data-action="tick-projects" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Tick Projects</button>
     </div>
+    {{#if isGM}}
+    <button type="button" class="qyc-undo" data-action="undo" {{#unless canUndo}}disabled{{/unless}}><i class="fas fa-clock-rotate-left"></i> {{undoLabel}}</button>
+    {{/if}}
     {{#if hasWeek}}
     <div class="qyc-week-action">
       <div class="qyc-action-buttons">

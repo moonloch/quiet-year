@@ -660,7 +660,11 @@ function seasonRemaining(seasonKey) {
 async function markRandomCardsDrawn(deck, count) {
   const available = undrawnCards(deck);
   const chosen = [];
-  for (let i = 0; i < Math.min(count, available.length); i++) {
+  // Fix the count before the loop: `available` is spliced as cards are chosen,
+  // so recomputing the bound against it each pass stops one card short in the
+  // case where there are exactly `count` cards left to take.
+  const take = Math.min(count, available.length);
+  for (let i = 0; i < take; i++) {
     const idx = Math.floor(Math.random() * available.length);
     chosen.push(available.splice(idx, 1)[0]);
   }
@@ -670,10 +674,127 @@ async function markRandomCardsDrawn(deck, count) {
   return chosen;
 }
 
+
+// Draw Week and Tick Projects are the two buttons that cost something on a
+// misclick, and neither can be inverted from where it leaves off. Summer's King
+// discards two cards chosen at random and the state that results records
+// nothing about which they were; a tick only touches projects that were active
+// with weeks left, so adding a week back to everything would inflate the ones
+// it passed over and reviving every completed project would raise ones that
+// finished weeks ago. Both are recoverable from a snapshot of
+// what they were about to change, so that is what is kept: the whole tracker
+// state, the cards that were marked drawn, and the chat message that was
+// posted.
+const UNDO_DEPTH = 10;
+
+// Its own setting rather than a corner of `state`: nested there, every snapshot
+// would capture the stack that came before it and the setting would grow by a
+// power of itself each week.
+function undoStack() {
+  const stored = game.settings.get(MODULE_ID, "undo");
+  return Array.isArray(stored?.entries) ? stored.entries : [];
+}
+
+async function setUndoStack(entries) {
+  await game.settings.set(MODULE_ID, "undo", { entries: entries.slice(-UNDO_DEPTH) });
+  refreshPlaySurface();
+}
+
+// An entry records only the fields its action writes. Snapshotting the whole
+// tracker would make undo a rollback of the world rather than of the action:
+// between a tick and the click that takes it back, a player can mark Contempt
+// and the GM can add an abundance or finish a project early, and restoring a
+// full snapshot would silently wipe all of it while the button promised only
+// "Undo Tick Projects". Keeping the snapshot narrow also keeps ten of them from
+// carrying ten copies of the year's log to every client on every draw.
+const DRAW_FIELDS = ["season", "currentCard", "week", "log", "gameOver"];
+// A tick is narrower still. Snapshotting the whole `projects` array would take
+// a rename or a finish-early made after the tick down with it, so it records
+// only the fields it writes, on only the projects it touched, addressed by id.
+const TICK_PROJECT_FIELDS = ["weeks", "status", "completed"];
+
+// Deep-copied, and taken before the action starts: getState() merges over a
+// fresh object but the arrays inside can still be the setting's own, so a
+// snapshot sharing them would be edited by the very action it exists to undo.
+function snapshotFields(state, fields) {
+  return foundry.utils.deepClone(Object.fromEntries(fields.map(f => [f, state[f]])));
+}
+
+function undoEntry(label, state, { cards = [], chatMessageId = null, projects = [] } = {}) {
+  return { label, state, cards, chatMessageId, projects };
+}
+
+// Only the keys the tick writes, so a project renamed or otherwise changed
+// since keeps everything else it has gained.
+function projectPatch(project) {
+  const patch = { id: project.id };
+  for (const f of TICK_PROJECT_FIELDS) if (f in project) patch[f] = project[f];
+  return foundry.utils.deepClone(patch);
+}
+
+function applyProjectPatch(state, patch) {
+  const project = (state.projects || []).find(p => p.id === patch.id);
+  if (!project) return false;
+  for (const f of TICK_PROJECT_FIELDS) {
+    if (f in patch) project[f] = patch[f];
+    else delete project[f];
+  }
+  return true;
+}
+
+// The chat message is posted after the entry is pushed, so that a chat failure
+// cannot leave the action applied with nothing to undo it. The id is patched in
+// once there is one.
+async function attachUndoMessage(chatMessageId) {
+  const stack = undoStack();
+  if (!stack.length) return;
+  stack[stack.length - 1].chatMessageId = chatMessageId;
+  await setUndoStack(stack);
+}
+
+async function pushUndo(entry) {
+  await setUndoStack([...undoStack(), entry]);
+}
+
+const undoLast = serialized(async function undoLast() {
+  if (!game.user.isGM) return ui.notifications.warn("The GM controls the Quiet Year tracker.");
+  const stack = undoStack();
+  const entry = stack[stack.length - 1];
+  if (!entry) return ui.notifications.warn("There is nothing to undo.");
+
+  // The cards come back first, then the message, then the state — the surface
+  // reads all three and the state write is what refreshes it.
+  let missing = 0;
+  for (const { deckId, cardId } of entry.cards || []) {
+    const deck = game.cards.get(deckId);
+    const card = deck?.cards.get(cardId);
+    if (!card) { missing++; continue; }
+    await deck.updateEmbeddedDocuments("Card", [{ _id: cardId, drawn: false }]);
+  }
+  if (entry.chatMessageId) await game.messages.get(entry.chatMessageId)?.delete();
+  // Restore first and pop second: if the state write fails, the entry is still
+  // on the stack and the GM can try again. Popping first would strand the year
+  // with the cards already returned and no way back.
+  const state = getState();
+  Object.assign(state, entry.state || {});
+  for (const patch of entry.projects || []) applyProjectPatch(state, patch);
+  await setState(state);
+  await setUndoStack(stack.slice(0, -1));
+
+  // A card that has gone since means a deck was repaired or replaced under the
+  // year. The rest of the undo still stands; say what could not be put back.
+  if (missing) ui.notifications.warn(`Undone: ${entry.label}, but ${missing} card${missing > 1 ? "s are" : " is"} no longer in its deck.`);
+  else ui.notifications.info(`Undone: ${entry.label}.`);
+});
+
 const drawWeek = serialized(async function drawWeek() {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the Quiet Year week deck.");
   let state = getState();
   if (state.gameOver) return ui.notifications.warn("The Quiet Year has ended. Reset the year to begin again.");
+  const before = snapshotFields(state, DRAW_FIELDS);
+  // Every card this draw marks drawn, so undo can put them back — the two
+  // Summer's King discards included, which nothing in the state records.
+  const drawn = [];
 
   let seasonKey = state.season || "spring";
   let deck = getDeck(seasonKey);
@@ -690,6 +811,7 @@ const drawWeek = serialized(async function drawWeek() {
     if (i >= SEASON_ORDER.length - 1) {
       state.gameOver = true;
       await setState(state);
+      await pushUndo(undoEntry("Draw Week", before));
       return ui.notifications.info("No Winter cards remain. The Quiet Year is over.");
     }
     seasonKey = SEASON_ORDER[i + 1];
@@ -704,6 +826,7 @@ const drawWeek = serialized(async function drawWeek() {
 
   const card = available[Math.floor(Math.random() * available.length)];
   await deck.updateEmbeddedDocuments("Card", [{ _id: card.id, drawn: true }]);
+  drawn.push({ deckId: deck.id, cardId: card.id });
 
   state.season = seasonKey;
   state.currentCard = {
@@ -722,7 +845,8 @@ const drawWeek = serialized(async function drawWeek() {
   // randomized, discarding two random undrawn cards is equivalent to discarding
   // the next two cards from a shuffled deck.
   if (seasonKey === "summer" && card.getFlag(MODULE_ID, "rank") === "K") {
-    await markRandomCardsDrawn(deck, 2);
+    const discarded = await markRandomCardsDrawn(deck, 2);
+    drawn.push(...discarded.map(c => ({ deckId: deck.id, cardId: c.id })));
     // The two discarded cards are not weeks of their own; the week they belong
     // to simply gets two actions.
     week.allowance = 2;
@@ -737,7 +861,9 @@ const drawWeek = serialized(async function drawWeek() {
 
   const seasonLabel = SEASON_LABELS[seasonKey];
   const chat = `<div class="quiet-year-chat-card"><h2>${card.name} — ${seasonLabel}</h2>${card.description}</div>`;
-  await ChatMessage.create({ content: chat, speaker: { alias: "The Quiet Year" } });
+  await pushUndo(undoEntry("Draw Week", before, { cards: drawn }));
+  const message = await ChatMessage.create({ content: chat, speaker: { alias: "The Quiet Year" } });
+  if (message?.id) await attachUndoMessage(message.id);
 
   if (state.gameOver) {
     new Dialog({
@@ -751,7 +877,7 @@ const drawWeek = serialized(async function drawWeek() {
 // Project outcomes are beats worth the same permanent record as the drawn card,
 // and a notification only reaches the GM who happened to click.
 async function announceProjects(heading, names) {
-  await ChatMessage.create({
+  return ChatMessage.create({
     content: `<div class="quiet-year-chat-card"><h2>${heading}</h2><p>${names.map(n => foundry.utils.escapeHTML(n)).join("<br>")}</p></div>`,
     speaker: { alias: "The Quiet Year" }
   });
@@ -765,11 +891,13 @@ function completeProject(project) {
 // A die that has run out is a finished project however it got there, so the
 // weekly tick, Winter 6's bulk reduction and a hand-adjusted countdown all
 // finish through here.
+// Returns the message it posted, so an undo of the tick that finished the
+// projects can take the announcement with it.
 async function announceCompleted(completed) {
-  if (!completed.length) return;
+  if (!completed.length) return null;
   const plural = completed.length > 1 ? "s" : "";
   ui.notifications.info(`Project${plural} complete: ${completed.join(", ")}`);
-  await announceProjects(`Project${plural} complete`, completed);
+  return announceProjects(`Project${plural} complete`, completed);
 }
 
 // `weeks` is a parameter because Winter 6 reduces every remaining project by 2
@@ -779,12 +907,19 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const reduction = Math.max(1, Math.floor(Number(weeks) || 1));
   const state = getState();
+  // Captured per project as the loop reaches it, just before it is changed.
+  const before = [];
   const completed = [];
+  // A tick that found nothing to count down changed nothing, and an undo entry
+  // for it would push a real one off the end of the stack.
+  let touched = false;
   // Only active projects count down. A cancelled project still has weeks left
   // on its die and would otherwise tick its way to zero and announce itself
   // finished.
   for (const project of activeProjects(state)) {
     if (Number(project.weeks) > 0) {
+      touched = true;
+      before.push(projectPatch(project));
       project.weeks = Math.max(0, Number(project.weeks) - reduction);
       if (project.weeks === 0) {
         completeProject(project);
@@ -793,7 +928,9 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
     }
   }
   await setState(state);
-  await announceCompleted(completed);
+  if (touched) await pushUndo(undoEntry(reduction > 1 ? `Reduce projects by ${reduction}` : "Tick Projects", {}, { projects: before }));
+  const message = await announceCompleted(completed);
+  if (touched && message?.id) await attachUndoMessage(message.id);
 });
 
 // Autumn A adds three weeks to a project die, so this deliberately has no
@@ -1092,6 +1229,9 @@ async function resetYear() {
     // carries no ids, and rows should not change identity under a surface that
     // has already drawn them.
     await setState(stampContemptIds(freshState()));
+    // A stack reaching back across the reset would offer to restore a year the
+    // table has deliberately put away.
+    await setUndoStack([]);
     ui.notifications.info("Quiet Year decks and tracker reset.");
   });
 }
@@ -1248,6 +1388,8 @@ class QuietYearPlaySurface extends Application {
 
   getData() {
     const state = getState();
+    const undone = undoStack();
+    const lastUndone = undone[undone.length - 1];
     const seasonKey = state.season || "spring";
     const week = currentWeek(state);
     const allowance = week?.allowance || 1;
@@ -1296,6 +1438,10 @@ class QuietYearPlaySurface extends Application {
         actions: (entry.actions || []).map(kind => WEEK_ACTIONS[kind]).join(", ")
       })),
       hasLog: !!(state.log || []).length,
+      canUndo: game.user.isGM && !!lastUndone,
+      // The button says what it will take back, so a misclick on it is as
+      // recoverable as the misclick that led here.
+      undoLabel: lastUndone ? `Undo ${lastUndone.label}` : "Nothing to undo",
       actionChoices: Object.entries(WEEK_ACTIONS)
         .filter(([kind]) => kind !== "project")
         .map(([kind, label]) => ({ kind, label })),
@@ -1329,6 +1475,7 @@ class QuietYearPlaySurface extends Application {
 
     root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek().catch(reportTrackerFailure));
     root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects().catch(reportTrackerFailure));
+    root.querySelector('[data-action="undo"]')?.addEventListener("click", () => undoLast().catch(reportTrackerFailure));
     root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear().catch(reportTrackerFailure));
 
     // The form is read here, synchronously, and only the state change is
@@ -1684,6 +1831,14 @@ Hooks.once("init", () => {
     type: Boolean,
     default: false
   });
+  game.settings.register(MODULE_ID, "undo", {
+    name: "Quiet Year undo history",
+    scope: "world",
+    config: false,
+    type: Object,
+    default: { entries: [] },
+    onChange: () => refreshPlaySurface()
+  });
   game.settings.register(MODULE_ID, "state", {
     name: "Quiet Year play-surface state",
     scope: "world",
@@ -1697,7 +1852,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, adjustProjectWeeks, renameProject, recordAction, adjustContempt, renameContemptRow,
+  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, undoLast, adjustProjectWeeks, renameProject, recordAction, adjustContempt, renameContemptRow,
     addResource, renameResource, removeResource, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
