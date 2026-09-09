@@ -105,6 +105,22 @@ function makeCardSource(rank, season) {
   };
 }
 
+// A hook that vetoes an update does not throw: the document is dropped from
+// the batch and the call resolves with nothing at all. Every reconcile the
+// installer does has to test what came back rather than only the absence of an
+// error, or a refusal reads as a success — which is how "the rules journal was
+// brought up to date" ends up on screen over a page that still holds the old
+// text.
+async function applyUpdate(doc, changes, label) {
+  try {
+    if (await doc.update(changes)) return true;
+    console.warn(`${MODULE_ID} | The ${label} was not updated — a hook may have vetoed it.`);
+  } catch (err) {
+    console.error(`${MODULE_ID} | Failed to update the ${label}`, err);
+  }
+  return false;
+}
+
 async function ensureDeck(seasonKey) {
   const season = SEASONS[seasonKey];
   const existing = game.cards.find(d => d.getFlag(MODULE_ID, "season") === seasonKey);
@@ -112,8 +128,18 @@ async function ensureDeck(seasonKey) {
     // The play surface is intended for collaborative use. Give players owner access
     // to the installed seasonal decks while leaving other world Card stacks alone.
     if (existing.ownership?.default !== CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER) {
-      await existing.update({"ownership.default": CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER});
+      // As with the macros: a refused ownership change leaves a deck that is
+      // still a deck, and failing the install over it would ask the GM to
+      // install the kit again on every load. Unlike a refused macro rename,
+      // though, the table runs straight into this one — the deck is there and
+      // the players cannot draw from it — so it is said out loud.
+      const gave = await applyUpdate(existing, { "ownership.default": CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER }, `${season.name} deck ownership`);
+      if (!gave) ui.notifications.warn(`Quiet Year: players could not be given access to the ${season.name} deck. It is installed, but only the GM can use it.`);
     }
+    // Ownership is reconciled; the cards themselves deliberately are not.
+    // Rewriting them would reset every `drawn` flag, which is the authority on
+    // which cards remain — a repair run mid-game would hand the table a fresh
+    // deck and lose the year so far.
     return existing;
   }
 
@@ -128,27 +154,239 @@ async function ensureDeck(seasonKey) {
   });
 }
 
+// Not cryptographic and not meant to be: it only has to tell "this page is
+// still exactly what the kit wrote" from "someone has edited it since", so a
+// GM's notes are never overwritten by a repair run. Trimmed on the way in,
+// because Foundry trims the HTML it stores while the module's template literals
+// open on a newline — the same text with different edges, and a fingerprint
+// that noticed the difference would call every page it had just written
+// "edited". Anything beyond that does count as an edit, including a GM
+// opening the page in the editor and saving it without typing — ProseMirror
+// re-serializes as it writes. That is the safe direction to be wrong in: the
+// module cannot tell a re-save from a rewrite, and treating it as a rewrite
+// keeps whatever the GM has there. It is also why the warning offers deleting
+// the *page* rather than the journal.
+// The server does not store the HTML it is sent: `HTMLField` runs it through
+// parse5 and sanitize-html on the way in, which closes an unclosed tag, writes
+// `<br/>` as `<br>`, gives a `<table><tr>` its `<tbody>`, and escapes a bare
+// `&`. Fingerprinting what was sent and comparing it against what was stored
+// would therefore latch the kit's own freshly written page as "edited by hand"
+// the first time one of these constants gains any of that — and no self-check
+// on the source text could see it coming. Both sides go through the browser's
+// own parser first, which normalizes the same things the same way, so the
+// comparison is between two texts that have each been through a parser rather
+// than between a source string and a stored one.
+function normalizeHtml(html) {
+  const holder = document.createElement("div");
+  holder.innerHTML = (html ?? "").trim();
+  return holder.innerHTML;
+}
+
+function contentFingerprint(html) {
+  const text = normalizeHtml(html);
+  let hash = 5381;
+  for (let i = 0; i < text.length; i++) hash = ((hash << 5) + hash + text.charCodeAt(i)) | 0;
+  return (hash >>> 0).toString(36);
+}
+
+// Every world installed before the kit stamped fingerprints has a rules page
+// carrying no flags at all, so there is nothing on the page itself to tell
+// untouched from hand-edited — and assuming "untouched" would overwrite a GM's
+// own notes on the first repair run after this update, which is exactly what
+// the fingerprints exist to prevent. The text answers it instead: each version
+// of a page the kit has shipped is fingerprinted here, and a page holding one
+// of them is ours to bring forward. Anything else is somebody's writing and is
+// left alone. The text as it stands is listed too, though it is compared
+// directly and would not need to be: leaving it out would mean the next change
+// to a constant silently refusing to update every world still holding the
+// version before it, and only if someone remembered to add the outgoing text
+// here at that moment. So: add the new fingerprint whenever the text changes,
+// and never take one away.
+const SHIPPED_FINGERPRINTS = {
+  rules: [
+    "uiyu9i", // the original text, which opened with an <h1> of its own
+    "13nbb4i" // the text as it stands
+  ],
+  // The workbook is rewritten only where it still holds one of these, which is
+  // what tells a page nobody has touched from one the table has filled in — so
+  // this list needs an entry whenever setupHtml changes, exactly like the rules
+  // one above.
+  setup: [
+    "vo70dq",
+    "1qebae1"
+  ]
+};
+
+// `reconcile` decides what a repair run may assume about a journal it did not
+// just create, and the two the kit ships want opposite answers. The rules
+// journal is generated reference text: a fixed typo or an added rule has to be
+// able to reach a world that already has it, which was impossible before — the
+// html argument was dropped on the floor for any existing journal, so the only
+// route was deleting it by hand.
+//
+// The setup journal is a workbook — a resources table and a "names, factions
+// and places worth remembering" section for the table to fill in — so writing
+// in it is what it is for, and a page there the kit cannot vouch for is left
+// without comment rather than reported as edited, and a journal that has pages
+// of its own gains nothing. What both share is the line that matters: text the
+// kit can prove is still its own is brought forward, and everything else is
+// left exactly as it is.
+//
+// The page is updated in place rather than replaced, so links and bookmarks to
+// it survive.
+function journalPageSource(pageName, key, html) {
+  return {
+    name: pageName,
+    type: "text",
+    text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: html },
+    ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER },
+    flags: { [MODULE_ID]: { key, contentFingerprint: contentFingerprint(html) } }
+  };
+}
+
+// One update, not two: the content and the fingerprint of it have to land
+// together. Written separately, a failure between them leaves the page holding
+// the new text under the old fingerprint, and every run after that reads it as
+// "edited by hand" — a latch on a page nobody has touched, with no way out but
+// deleting the journal.
+//
+// The page name is reconciled here as `ensureMacro` reconciles a macro's:
+// pages created before the journal and page names were separated carry the
+// journal's own name and stack a title against the sheet's, and updating their
+// text without their name would leave that half-fixed.
+async function writeJournalPage(page, pageName, key, html) {
+  return applyUpdate(page, {
+    name: pageName,
+    "text.content": html,
+    [`flags.${MODULE_ID}.key`]: key,
+    [`flags.${MODULE_ID}.contentFingerprint`]: contentFingerprint(html)
+  }, `${key} journal page`);
+}
+
+// The page the kit wrote, or nothing. Its flag names it outright; a journal
+// from before the flags existed has to be recognised by the text it holds
+// instead — which is the same test that decides whether an unflagged page may
+// be written to at all. Taking the first page instead would overwrite the notes
+// of a GM who added their own, or stamp an image page as ours and write text
+// content into it that it cannot show. Going the other way and claiming only a
+// journal with a single page would lock a legacy world out of rules updates for
+// good the moment anyone added a second one.
+function kitJournalPage(journal, key, pageName, journalName) {
+  // Duplicating a page copies its flags, so a GM who copied the reference page
+  // to annotate can leave two claiming to be the kit's. The one still holding
+  // what the kit wrote is the original; taking whichever came first would let
+  // an annotated copy speak for it and freeze the real page out of updates.
+  const flagged = journal.pages.filter(p => p.getFlag(MODULE_ID, "key") === key);
+  if (flagged.length) {
+    return flagged.find(p => p.getFlag(MODULE_ID, "contentFingerprint") === contentFingerprint(p.text?.content || "")) ?? flagged[0];
+  }
+  const texts = journal.pages.contents.filter(p => p.type === "text");
+  const shipped = SHIPPED_FINGERPRINTS[key] || [];
+  // Text the kit shipped names its own page outright.
+  const known = texts.find(p => shipped.includes(contentFingerprint(p.text?.content || "")));
+  if (known) return known;
+  // Failing that, the name the kit gave the page — either the one it uses now
+  // or the journal's own, which is what it used before the two were separated.
+  // A page written in by a GM is unrecognisable by its text, and it is this
+  // that finds it, so their words are reported and kept rather than left
+  // unclaimed with a second copy of the reference text added beside them.
+  // Nothing else is claimed: a page they deleted and replaced under a name of
+  // their own is not the kit's to judge, and the run restores its own beside
+  // it instead.
+  // Both the journal's name as it stands and the one the kit gave it: a GM who
+  // renames the journal does not rename the page inside it, and matching only
+  // the current name would leave that page unrecognised.
+  const legacyNames = new Set([pageName, journal.name, journalName]);
+  return texts.find(p => legacyNames.has(p.name)) ?? null;
+}
+
 // A single-page journal shows its name twice over: once in the sheet's title
 // bar and once as the page heading. Giving the page its own shorter name keeps
 // the second line from restating the first — and the page HTML opens straight
-// into content, since that heading is the <h1> the page already renders.
-async function ensureJournal(name, pageName, key, html) {
+// into content rather than a third heading of its own.
+async function ensureJournal(name, pageName, key, html, { reconcile = false } = {}) {
   let journal = game.journal.find(j => j.getFlag(MODULE_ID, "key") === key);
-  if (journal) return journal;
+  if (journal) {
+    const page = kitJournalPage(journal, key, pageName, name);
+    if (!page) {
+      // Putting back a page that has gone is what a repair run is for, and it
+      // adds rather than replaces, so reference text goes back beside whatever
+      // else is in the journal. The workbook only gets one when the journal is
+      // empty: pages there that the kit cannot account for are the table's own
+      // writing, and are not a gap to fill.
+      const hadPages = journal.pages.size;
+      // Nothing is added to a workbook that has pages of its own — but the kit's
+      // prompts and tables are then not in this world at all, which is worth
+      // saying rather than filing under "kept".
+      if (!reconcile && hadPages) return { journal, status: "absent" };
+      const restored = await journal.createEmbeddedDocuments("JournalEntryPage", [journalPageSource(pageName, key, html)]);
+      // A vetoed create comes back as an empty array rather than an error, and
+      // reporting the page restored would mark the install complete over an
+      // empty journal.
+      if (!restored?.length) return { journal, status: "failed" };
+      // An empty journal has lost its page; a journal with pages the kit cannot
+      // account for — a GM who renamed both the journal and the page, and wrote
+      // in it — has gained one beside them. Saying "put back" of the second
+      // would be telling the GM something they can see is not true.
+      return { journal, status: hadPages ? "added" : "restored" };
+    }
+    const wanted = contentFingerprint(html);
+    const actual = contentFingerprint(page.text?.content || "");
+    const stored = page.getFlag(MODULE_ID, "contentFingerprint");
+    // Only a name the kit gave the page is reconciled — the one it uses now, or
+    // the journal's, from before the two were separated. A name the GM chose
+    // is theirs, and renaming it back on every repair run would be the kit
+    // quietly overruling them.
+    // Only against the kit's own journal name, not the journal's name as it
+    // stands: a GM who renames the journal and names the page to match has
+    // chosen that name, and it is not the kit's to overrule.
+    const rename = page.name !== pageName && page.name === name;
+    const targetName = rename ? pageName : page.name;
+    // Behind the current text, or written in. A fingerprint that still matches
+    // the content says the kit was the last to touch the page; where there is
+    // no fingerprint, the content itself has to be a version the kit shipped.
+    const ours = stored ? stored === actual : !!SHIPPED_FINGERPRINTS[key]?.includes(actual);
+    // The workbook is the table's to write in, so a page there that the kit
+    // cannot vouch for is simply left, and not reported as edited — being
+    // written in is what it is for.
+    if (!ours) return { journal, status: reconcile ? "edited" : "kept" };
+    if (actual === wanted) {
+      // Already the current text. A page from before the fingerprints carries
+      // nothing saying so, so stamp it and spare the next run the deduction —
+      // but that stamp is bookkeeping. If it is refused the journal is still
+      // right, and failing the install over it would leave the GM re-prompted
+      // on every world load with nothing actually wrong.
+      if (stored !== wanted || rename) await writeJournalPage(page, targetName, key, html);
+      return { journal, status: "current" };
+    }
+    // Reached for the workbook too: a page still holding a version the kit
+    // shipped has nothing of the table's on it, and leaving it behind would
+    // keep the <h1> that stacks a third heading under the sheet's title.
+    // The page is behind, not gone, if this does not land. Failing the install
+    // over it would re-arm the install prompt on every world load over a
+    // journal that is there and perfectly readable — the same reason a refused
+    // macro rename does not.
+    if (!await writeJournalPage(page, targetName, key, html)) return { journal, status: "stale" };
+    return { journal, status: "updated" };
+  }
   journal = await JournalEntry.create({
     name,
     ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER },
     flags: { [MODULE_ID]: { key, createdByKit: true } },
-    pages: [{
-      name: pageName,
-      type: "text",
-      text: { format: CONST.JOURNAL_ENTRY_PAGE_FORMATS.HTML, content: html },
-      ownership: { default: CONST.DOCUMENT_OWNERSHIP_LEVELS.OBSERVER }
-    }]
+    pages: [journalPageSource(pageName, key, html)]
   });
-  return journal;
+  // A preCreate hook — another module, or a permission failure — can veto the
+  // creation, and create() then returns nothing. A hook that rewrites the
+  // create data, or a page that fails validation, can also leave a journal
+  // with no page in it, which is not an install either.
+  if (!journal?.pages?.size) return { journal: journal ?? null, status: "failed" };
+  return { journal, status: "created" };
 }
 
+// Deliberately create-only. The scene exists to be drawn on — the map *is* the
+// game — so a repair run that restored dimensions, grid or padding would move
+// or clip a year's worth of the table's drawings. There is nothing here worth
+// reconciling against that risk.
 async function ensureScene() {
   let scene = game.scenes.find(s => s.getFlag(MODULE_ID, "key") === "cobalt-scene");
   if (scene) return scene;
@@ -181,7 +419,10 @@ async function ensureMacro(key = "installer") {
   let macro = game.macros.find(m => m.getFlag(MODULE_ID, "key") === key);
   if (macro) {
     if (macro.command !== cfg.command || macro.name !== cfg.name) {
-      await macro.update({ name: cfg.name, command: cfg.command });
+      // A refused rename does not make the macro any less installed, and
+      // counting it as missing would have the GM prompted to install the kit on
+      // every world load over a macro that is there and works.
+      await applyUpdate(macro, { name: cfg.name, command: cfg.command }, `${cfg.name} macro`);
     }
     return macro;
   }
@@ -1334,6 +1575,46 @@ const setupHtml = `
 <h2>Names / factions / places worth remembering</h2><p><br><br><br><br></p>
 <h2>Looming end</h2><p>You can leave the Frost Shepherds mysterious or rename them later. Avoid defining exactly what their arrival means before play; the ambiguity is useful campaign fuel.</p>`;
 
+// Every step of the install writes to documents, and most of them to documents
+// the kit did not create: a hook that throws, a rejected update, a veto. One
+// rejection used to take the whole install with it — no scene, no macros, no
+// completion flag, no summary — and the GM saw nothing at all, because the
+// install prompt's callback neither awaits nor catches. Each step reports
+// itself like a failed deck instead, and the rest carries on.
+async function ensurePart(label, task) {
+  try {
+    const part = await task();
+    if (part) return part;
+    // A vetoed create() returns nothing rather than throwing, and silence there
+    // would leave the GM re-prompted to install on every world load with
+    // nothing saying which piece is missing.
+    console.error(`${MODULE_ID} | The ${label} was not created — a hook may have vetoed it.`);
+  } catch (err) {
+    console.error(`${MODULE_ID} | Failed to create or repair the ${label}`, err);
+  }
+  ui.notifications.error(`Quiet Year: failed to create or repair the ${label}. See console for details.`);
+  return null;
+}
+
+// A journal reports a veto as a status rather than by throwing, so that needs
+// saying out loud too. Either way the journal already in the world is handed
+// back: failing to write to a journal does not make it disappear, and the
+// summary should say what is there.
+async function ensureJournalPart(label, name, pageName, key, html, options) {
+  const result = await ensurePart(`${label} journal`, () => ensureJournal(name, pageName, key, html, options));
+  if (result && result.status !== "failed") return result;
+  if (result) {
+    // ensurePart cannot tell this apart from success — a refusal comes back as
+    // a status on an object, not as a throw — so the reporting happens here,
+    // and says whether it was the journal or the page inside it.
+    const what = result.journal ? `${label} journal page` : `${label} journal`;
+    console.error(`${MODULE_ID} | The ${what} was not created — a hook may have vetoed it.`);
+    ui.notifications.error(`Quiet Year: failed to create or repair the ${what}. See console for details.`);
+  }
+  const existing = game.journal.find(j => j.getFlag(MODULE_ID, "key") === key) ?? null;
+  return { journal: result?.journal ?? existing, status: "failed" };
+}
+
 async function installKit() {
   if (!game.user.isGM) return ui.notifications.warn("Only a GM can install the Quiet Year kit into the world.");
 
@@ -1349,30 +1630,49 @@ async function installKit() {
       ui.notifications.error(`Quiet Year: failed to create ${seasonKey} deck. See console for details.`);
     }
   }
-  const rules = await ensureJournal("Quiet Year — Rules & Turn Summary", "Table Reference", "rules", rulesHtml);
-  const setup = await ensureJournal("Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
-  const scene = await ensureScene();
-  const macro = await ensureMacro("installer");
-  const playMacro = await ensureMacro("play");
+  const rules = await ensureJournalPart("rules", "Quiet Year — Rules & Turn Summary", "Table Reference", "rules", rulesHtml, { reconcile: true });
+  const setup = await ensureJournalPart("setup", "Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
+  const scene = await ensurePart("Cobalt Reach scene", () => ensureScene());
+  const macro = await ensurePart("Install / Repair macro", () => ensureMacro("installer"));
+  const playMacro = await ensurePart("play surface macro", () => ensureMacro("play"));
 
-  const complete = decks.length === 4;
+  // The workbook reaches most of these too — a pristine legacy one is brought
+  // forward like any other page — so both are reported. Only "edited" is the
+  // rules journal's alone: writing in the workbook is what it is for.
+  for (const [label, result] of [["rules", rules], ["setup", setup]]) {
+    if (result.status === "updated") ui.notifications.info(`Quiet Year: the ${label} journal was brought up to date.`);
+    if (result.status === "restored") ui.notifications.info(`Quiet Year: the ${label} journal had lost its page, and it has been put back.`);
+    if (result.status === "stale") ui.notifications.warn(`Quiet Year: the ${label} journal could not be brought up to date — see the console. The journal itself is fine.`);
+  }
+  // Only the rules journal can reach these two: nothing is ever added to a
+  // workbook that has pages of its own, which is the same guard that makes the
+  // workbook the only one that can come back "absent".
+  if (rules.status === "added") ui.notifications.info("Quiet Year: the rules journal held no page of the kit's, so one was added beside what is there.");
+  if (setup.status === "absent") ui.notifications.warn("Quiet Year: the setup journal holds no page of the kit's, so its prompts and tables are not in this world. Nothing in there was touched. To take the kit's copy, move those pages to a journal of your own — or delete the setup journal — and repair again.");
+  if (rules.status === "edited") ui.notifications.warn("Quiet Year: the rules journal holds writing that is not the kit's, so it was left as it is. Delete that page and repair again to take the current text; the rest of the journal is left alone.");
+
+  const journals = [rules, setup].filter(result => result.status !== "failed").length;
+  const macros = [macro, playMacro].filter(m => m).length;
+  const complete = decks.length === 4 && journals === 2 && !!scene && macros === 2;
   await game.settings.set(MODULE_ID, "installed", complete);
   if (complete) ui.notifications.info("Quiet Year — Cobalt Reach kit is ready.");
-  else ui.notifications.warn(`Quiet Year: ${decks.length}/4 seasonal decks created. Run the repair macro after correcting any errors.`);
+  // Every piece is counted, or a failed scene reads as a warning that nothing
+  // is wrong.
+  else ui.notifications.warn(`Quiet Year: the world is not fully set up (${decks.length}/4 decks, ${journals}/2 journals, ${scene ? 1 : 0}/1 scene, ${macros}/2 macros). Run the repair macro after correcting any errors.`);
 
   const content = `
   <div class="quiet-year-cobalt-dialog">
     <p><strong>Installed into this world:</strong></p>
     <ul>
       <li>${decks.length}/4 seasonal card decks (${decks.reduce((n,d) => n + d.cards.size, 0)} cards)</li>
-      <li>2 reference journals</li>
-      <li>1 blank gridless Cobalt Reach scene</li>
-      <li>2 macros (repair/setup + play surface)</li>
+      <li>${journals}/2 reference journals (rules: ${rules.status}, setup: ${setup.status})</li>
+      <li>${scene ? 1 : 0}/1 blank gridless Cobalt Reach scene</li>
+      <li>${macros}/2 macros (repair/setup + play surface)</li>
     </ul>
     <p>You can disable the module after setup; the created world documents will remain.</p>
   </div>`;
   new Dialog({ title: "Quiet Year — Cobalt Reach", content, buttons: { ok: { label: "Good" } } }).render(true);
-  return {decks, rules, setup, scene, macro, playMacro};
+  return {decks, rules: rules.journal, setup: setup.journal, scene, macro, playMacro};
 }
 
 Hooks.once("init", () => {
@@ -1401,6 +1701,18 @@ Hooks.once("ready", async () => {
     addResource, renameResource, removeResource, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
+  // The fingerprints can tell an edited page from a pristine one, but not that
+  // someone changed rulesHtml and forgot to list the text it replaced — which
+  // would report every world still holding that text as hand-edited.
+  // Only half the invariant can be checked: that the text as it stands is
+  // listed. Nothing records how many versions have shipped, so a maintainer who
+  // replaces the outgoing entry instead of appending to it passes this
+  // silently — and every world still holding that text is then taken for
+  // someone's own writing. The list only grows; see AGENTS.md.
+  for (const [key, html] of [["rules", rulesHtml], ["setup", setupHtml]]) {
+    if (SHIPPED_FINGERPRINTS[key].includes(contentFingerprint(html))) continue;
+    console.warn(`${MODULE_ID} | ${key} journal text has changed without ${contentFingerprint(html)} being added to SHIPPED_FINGERPRINTS. Worlds holding the previous text will be taken for someone's own writing.`);
+  }
   await migrateWeekNumber();
   await migrateContemptIds();
   if (game.settings.get(MODULE_ID, "installed")) return;
