@@ -214,7 +214,41 @@ function getState() {
 
 async function setState(state) {
   await game.settings.set(MODULE_ID, "state", state);
-  if (window.QuietYearCobalt?.app?.rendered) window.QuietYearCobalt.app.render(false);
+  refreshPlaySurface();
+}
+
+// Foundry broadcasts world settings and card updates to every client, but only
+// the acting client re-renders on its own. Every refresh — local or remote —
+// goes through this one debounced helper, so a single draw (a setting write
+// plus one to three card updates) costs one render on every client.
+const refreshPlaySurface = foundry.utils.debounce(() => {
+  const app = window.QuietYearCobalt?.app;
+  if (app?.rendered) app.render(false);
+}, 100);
+
+function isKitDeck(stack) {
+  return !!stack && SEASON_ORDER.includes(stack.getFlag(MODULE_ID, "season"));
+}
+
+function registerRealtimeHooks() {
+  // State changes arrive through the setting's own onChange callback, which
+  // Foundry fires on every client. onChange is not called when the Setting
+  // document is deleted outright, so that one case is hooked here to keep the
+  // surface from showing state that no longer exists.
+  Hooks.on("deleteSetting", setting => {
+    if (setting?.key === `${MODULE_ID}.state`) refreshPlaySurface();
+  });
+  // The card hooks cover the season card counter, which is derived from the
+  // decks' drawn flags rather than from module state and so travels as its own
+  // document update.
+  for (const hook of ["createCard", "updateCard", "deleteCard"]) {
+    Hooks.on(hook, card => {
+      if (isKitDeck(card?.parent)) refreshPlaySurface();
+    });
+  }
+  Hooks.on("updateCards", stack => {
+    if (isKitDeck(stack)) refreshPlaySurface();
+  });
 }
 
 function getDeck(seasonKey) {
@@ -346,6 +380,13 @@ async function resetYear() {
 }
 
 class QuietYearPlaySurface extends Application {
+  constructor(...args) {
+    super(...args);
+    // Names of fields the local user has typed into but not yet committed.
+    // A refresh triggered by someone else must not wipe them out mid-sentence.
+    this._dirtyFields = new Set();
+  }
+
   static get defaultOptions() {
     return foundry.utils.mergeObject(super.defaultOptions, {
       id: "quiet-year-cobalt-play-surface",
@@ -356,6 +397,56 @@ class QuietYearPlaySurface extends Application {
       resizable: true,
       classes: ["quiet-year-cobalt", "play-surface"]
     });
+  }
+
+  // Re-renders can now arrive at any moment from another client, so carry
+  // uncommitted text and the caret across them.
+  async _render(force, options) {
+    const snapshot = this._captureFormState();
+    await super._render(force, options);
+    this._restoreFormState(snapshot);
+  }
+
+  _captureFormState() {
+    const root = this.element?.[0];
+    if (!root) return null;
+    const values = {};
+    for (const name of this._dirtyFields) {
+      const el = root.querySelector(`[name="${name}"]`);
+      if (el) values[name] = el.value;
+    }
+    const active = document.activeElement;
+    let focus = null;
+    if (active?.name && root.contains(active)) {
+      focus = { name: active.name, start: null, end: null };
+      // Number inputs throw on selection access in some browsers.
+      try {
+        focus.start = active.selectionStart;
+        focus.end = active.selectionEnd;
+      } catch (_err) { /* caret position is a nicety, not a requirement */ }
+    }
+    return { values, focus };
+  }
+
+  _restoreFormState(snapshot) {
+    const root = this.element?.[0];
+    if (!snapshot || !root) return;
+    for (const [name, value] of Object.entries(snapshot.values)) {
+      const el = root.querySelector(`[name="${name}"]`);
+      if (el && !el.disabled) el.value = value;
+    }
+    if (!snapshot.focus) return;
+    const el = root.querySelector(`[name="${snapshot.focus.name}"]`);
+    if (!el || el.disabled) return;
+    el.focus();
+    if (snapshot.focus.start === null) return;
+    try {
+      el.setSelectionRange(snapshot.focus.start, snapshot.focus.end);
+    } catch (_err) { /* see above */ }
+  }
+
+  _clearDirty(...names) {
+    for (const name of names) this._dirtyFields.delete(name);
   }
 
   getData() {
@@ -377,6 +468,11 @@ class QuietYearPlaySurface extends Application {
   activateListeners(html) {
     super.activateListeners(html);
     const root = html[0] ?? html;
+
+    root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
+      if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
+    });
+
     root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek());
     root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects());
     root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear());
@@ -389,6 +485,7 @@ class QuietYearPlaySurface extends Application {
       state.scarcities = lines('[name="scarcities"]');
       state.contempt[0].name = root.querySelector('[name="player0-name"]')?.value?.trim() || "Player 1";
       state.contempt[1].name = root.querySelector('[name="player1-name"]')?.value?.trim() || "Player 2";
+      this._clearDirty("abundances", "scarcities", "player0-name", "player1-name");
       await setState(state);
       ui.notifications.info("Quiet Year trackers saved.");
     });
@@ -400,6 +497,7 @@ class QuietYearPlaySurface extends Application {
       if (!name) return ui.notifications.warn("Give the project a name.");
       const state = getState();
       state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), completed: false });
+      this._clearDirty("new-project-name", "new-project-weeks");
       await setState(state);
     });
 
@@ -501,12 +599,16 @@ Hooks.once("init", () => {
     scope: "world",
     config: false,
     type: Object,
-    default: freshState()
+    default: freshState(),
+    // Fires on every client that receives the change, which is what keeps
+    // remote play surfaces in step with the GM.
+    onChange: () => refreshPlaySurface()
   });
 });
 
 Hooks.once("ready", async () => {
   window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, resetYear, SEASONS, app: null };
+  registerRealtimeHooks();
   if (!game.user.isGM) return;
   if (game.settings.get(MODULE_ID, "installed")) return;
 
