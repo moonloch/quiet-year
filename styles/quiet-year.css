@@ -5,6 +5,7 @@
 .qyc-panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; container-type: inline-size; container-name: qyc-panel; }
 .qyc-panel section { border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; padding: 10px; }
 .qyc-panel h2 { margin: 0 0 8px; font-size: 1.15rem; }
+.qyc-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .qyc-panel h3 { margin: 4px 0 8px; font-size: 1.05rem; }
 /* The play surface is two columns rather than one tall stack: the week, the
    card and Resources on the left, Projects and Contempt on the right. Projects
@@ -47,8 +48,7 @@
 .qyc-history-list { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
 .qyc-history-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 7px; align-items: baseline; font-size: .9em; }
 .qyc-history-week { text-align: right; font-weight: 700; opacity: .7; }
-.qyc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.qyc-undo { margin-top: 6px; }
+.qyc-actions { display: grid; gap: 6px; }
 .qyc-current-card { min-height: 145px; }
 .qyc-card-text hr { opacity: .4; }
 .qyc-projects { display: flex; flex-direction: column; gap: 5px; }
@@ -100,7 +100,6 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
    column is too narrow to carry two of anything side by side. */
 @container qyc-column (max-width: 380px) {
   .qyc-columns { grid-template-columns: 1fr; }
-  .qyc-actions { grid-template-columns: 1fr; }
 }
 
 /* ------------------------------------------------------------------ */
