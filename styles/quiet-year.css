@@ -2,10 +2,36 @@
 .quiet-year-cobalt-dialog code { user-select: all; }
 
 .quiet-year-cobalt .window-content { padding: 0; overflow: auto; }
-.qyc-panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.qyc-panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; container-type: inline-size; container-name: qyc-panel; }
 .qyc-panel section { border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; padding: 10px; }
 .qyc-panel h2 { margin: 0 0 8px; font-size: 1.15rem; }
 .qyc-panel h3 { margin: 4px 0 8px; font-size: 1.05rem; }
+/* The play surface is two columns rather than one tall stack: the week, the
+   card and Resources on the left, Projects and Contempt on the right. Projects
+   is the section that grows without bound, so giving it a column of its own is
+   what keeps the controls used every week — Draw Week, the project dice, the
+   Contempt marks — above the fold once a table is running several projects.
+
+   Both columns are containers, and every rule that reacts to width below does
+   so with a container query rather than a media query. The surface is a
+   floating window whose width has nothing to do with the viewport's, so a
+   viewport media query would leave a window dragged narrow with its grids
+   still splitting, and collapse them in a wide window on a small screen. The
+   panel splits only once each half would clear 380px — the width at which the
+   grids nested inside a column give up and stack — so the two breakpoints
+   cannot fire against each other. Widen the panel and Resources stays split
+   throughout; narrow it and the panel unsplits first, at a point where the
+   column is wide enough that nothing inside it has to. Stacked, the sections
+   read in column order — week, card, Resources, then Projects and Contempt —
+   which is the price of the split; a narrow window is the degraded case and
+   scrolls either way. */
+.qyc-panel-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; align-items: start; }
+.qyc-panel-column { display: flex; flex-direction: column; gap: 10px; min-width: 0; container-type: inline-size; container-name: qyc-column; }
+
+@container qyc-panel (max-width: 770px) {
+  .qyc-panel-columns { grid-template-columns: 1fr; }
+}
+
 .qyc-muted { opacity: 0.68; font-size: 0.9em; }
 .qyc-game-over { font-weight: 800; letter-spacing: .05em; }
 .qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
@@ -70,7 +96,9 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-footer { display: flex; flex-direction: column; gap: 6px; }
 .quiet-year-chat-card h2 { margin-bottom: 6px; }
 
-@media (max-width: 420px) {
+/* 380px is the figure the panel's own breakpoint is derived from: below it a
+   column is too narrow to carry two of anything side by side. */
+@container qyc-column (max-width: 380px) {
   .qyc-columns { grid-template-columns: 1fr; }
   .qyc-actions { grid-template-columns: 1fr; }
 }
