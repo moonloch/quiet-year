@@ -591,6 +591,88 @@ function openPlaySurface() {
   window.QuietYearCobalt.app.render(true);
 }
 
+// The two macros are easy to lose track of on a hotbar page, and there was no
+// one-click route to the rules at all. This tab keeps both reachable from
+// anywhere in the world, for players as well as the GM.
+//
+// Foundry v13+ builds the sidebar itself: `Sidebar.TABS` describes the strip of
+// icons and `CONFIG.ui` supplies the class instantiated for each one. There is
+// no DOM injection to do — but both records are read by `Game#initializeUI`,
+// which runs after `setup` and before `ready`, so registration has to happen at
+// `init`. Sidebar tabs are ApplicationV2; the play surface is still V1, and
+// nothing here requires porting it, since the tab only calls into it.
+//
+// Everything is reached through the `foundry.*` namespace rather than
+// destructured into locals. This file is a classic script, so a top-level
+// `const` lands in the shared global lexical scope, and `const Sidebar = …`
+// collides with Foundry's non-configurable `globalThis.Sidebar` shim — a
+// SyntaxError raised before the first statement runs, which silently takes the
+// whole module with it. Same trap for any other name core exposes globally.
+class QuietYearSidebarTab extends foundry.applications.api.HandlebarsApplicationMixin(
+  foundry.applications.sidebar.AbstractSidebarTab
+) {
+  static DEFAULT_OPTIONS = {
+    // Only shown when the tab is popped out (right-click on its icon).
+    window: { title: "The Quiet Year" },
+    actions: {
+      openPlaySurface: QuietYearSidebarTab.#onOpenPlaySurface,
+      openRules: QuietYearSidebarTab.#onOpenRules
+    }
+  };
+
+  // Doubles as the CONFIG.ui key, the Sidebar.TABS key, the tab element's id,
+  // and the `quiet-year-sidebar` class the stylesheet hangs off.
+  static tabName = MODULE_ID;
+
+  static PARTS = {
+    [MODULE_ID]: {
+      template: `modules/${MODULE_ID}/templates/sidebar.html`,
+      root: true
+    }
+  };
+
+  /**
+   * @this {QuietYearSidebarTab}
+   * @type {ApplicationClickAction}
+   */
+  static #onOpenPlaySurface() {
+    openPlaySurface();
+  }
+
+  /**
+   * Found by the installer's flag rather than by name, so a renamed journal
+   * still opens — and so the lookup keeps working if the title ever changes.
+   * @this {QuietYearSidebarTab}
+   * @type {ApplicationClickAction}
+   */
+  static #onOpenRules() {
+    // A player's `game.journal` holds only what they can observe. The installer
+    // creates the rules journal with default OBSERVER ownership, so a miss here
+    // means either the kit was never installed or a GM has since restricted or
+    // deleted the journal — point each audience at whoever can fix it.
+    const journal = game.journal.find(j => j.getFlag(MODULE_ID, "key") === "rules");
+    if (!journal) {
+      return ui.notifications.warn(game.user.isGM
+        ? "Quiet Year rules journal not found. Run the “Quiet Year: Install / Repair Kit” macro to create it."
+        : "Quiet Year rules journal not found. Ask your GM to run the “Quiet Year: Install / Repair Kit” macro.");
+    }
+    journal.sheet.render(true);
+  }
+}
+
+function registerSidebarTab() {
+  CONFIG.ui[MODULE_ID] = QuietYearSidebarTab;
+  foundry.applications.sidebar.Sidebar.TABS[MODULE_ID] = {
+    // The tab strip runs its tooltip through `localize`, which returns the
+    // string unchanged when it is not a known key — so hardcoded English works
+    // here, per the project's no-i18n ruling.
+    tooltip: "The Quiet Year",
+    // Not a Font Awesome class: the sidebar puts whatever it is given on the
+    // button, and the stylesheet paints a "Q" on that button's pseudo-element.
+    icon: "quiet-year-tab-icon"
+  };
+}
+
 const rulesHtml = `
 <p>The Quiet Year is by Avery Alder, published by Buried Without Ceremony. Its text is not this module’s to carry. Put your own transcription in content/rules.html.</p>`;
 
@@ -654,6 +736,7 @@ async function installKit() {
 }
 
 Hooks.once("init", () => {
+  registerSidebarTab();
   game.settings.register(MODULE_ID, "installed", {
     name: "Quiet Year kit installed",
     scope: "world",

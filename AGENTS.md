@@ -53,6 +53,16 @@ Everything lives in `scripts/quiet-year.js`, in four parts: the `SEASONS` card d
 
 `window.QuietYearCobalt` is the public surface (`installKit`, `openPlaySurface`, `drawWeek`, `tickProjects`, `resetYear`, and the live `app`). The generated macros call into it, so keep those names stable.
 
+**The sidebar tab.** `QuietYearSidebarTab` is an ApplicationV2 tab registered by `registerSidebarTab()` from `init` — `CONFIG.ui[MODULE_ID]` supplies the class and `Sidebar.TABS[MODULE_ID]` the icon-strip entry, both of which `Game#initializeUI` reads between `setup` and `ready`. It renders for players as well as the GM and only launches things: the play surface, and the rules journal found by its `key: "rules"` flag. Its `tabName` is `MODULE_ID`, which is also the tab element's id and the `.quiet-year-sidebar` class the stylesheet hangs off.
+
+## Two traps this file has already hit
+
+**Top-level `const` is global.** `scripts/quiet-year.js` is a classic script, so every top-level `const`/`class` goes into the shared global lexical scope. Declaring one whose name matches a non-configurable global that Foundry already defines — `Sidebar`, and most other core class names — is a SyntaxError raised *before the first statement runs*, so the entire module silently fails to load with nothing in the console. Reach through the namespace (`foundry.applications.sidebar.Sidebar`) instead of destructuring core classes into locals.
+
+**Core CSS is layered; ours is not.** Rules like `.tab[data-tab]:not(.active) { display: none }` live in a core `@layer`, and an unlayered module stylesheet outranks every layered rule regardless of specificity. An unconditional `display: flex` on a sidebar tab body would therefore show it underneath every other tab. Scope such rules to `.active` and to `.sidebar-popout .window-content`.
+
+`rulesHtml` in `scripts/quiet-year.js` is the only copy of the rules-journal text. A Foundry export of the same journal used to sit at the project root; it was byte-identical to the constant and carried world-specific fields (`folder`, page `_id`, `_stats` naming the `foundry-ironsworn` system and a `starforged` world), so it was removed rather than kept as a second copy that could drift. Note that editing the constant does not update a journal that already exists — `ensureJournal` returns early on a hit (issue #8).
+
 ## Rules fidelity
 
 The seasonal decks are drawn from randomly among undrawn cards, which is equivalent to shuffling once and drawing from the top — see the comments in `drawWeek()`. Two card effects are special-cased and should stay that way: the **King of Summer** discards two further Summer cards (two actions that week), and the **King of Winter** ends the game immediately.
