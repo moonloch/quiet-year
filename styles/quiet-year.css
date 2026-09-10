@@ -1,4 +1,15 @@
 .quiet-year-cobalt-dialog .notes { opacity: 0.9; }
+/* The Take Action form: three choices, a note, and the project die that only
+   the third one needs. Stacked in one column so the note reads as belonging to
+   whichever choice is selected above it. */
+/* The dialog sizes itself to its content, and a bare radio list is narrower
+   than the note beside it needs to be. */
+.qyc-action-form { display: flex; flex-direction: column; gap: 8px; min-width: 360px; }
+.qyc-action-form p { margin: 0; }
+.qyc-choices { display: flex; flex-direction: column; gap: 3px; }
+.qyc-choice { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.qyc-choice input { flex: 0 0 auto; margin: 0; }
+.qyc-field { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 8px; }
 .quiet-year-cobalt-dialog code { user-select: all; }
 
 .quiet-year-cobalt .window-content { padding: 0; overflow: auto; }

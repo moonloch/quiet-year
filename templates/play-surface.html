@@ -8,9 +8,9 @@
       {{#if gameOver}}<div class="qyc-game-over">THE QUIET YEAR IS OVER</div>{{/if}}
     </div>
     <div class="qyc-turn-steps">
-      <button type="button" data-action="draw" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-cards-blank"></i> Draw Card</button>
+      <button type="button" data-action="draw" {{#unless canDraw}}disabled{{/unless}}><i class="fas fa-cards-blank"></i> Draw Card</button>
       <i class="fas fa-arrow-right qyc-turn-arrow" aria-hidden="true"></i>
-      <button type="button" data-action="tickProjects" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Adjust Project Dice</button>
+      <button type="button" data-action="tickProjects" {{#unless canTick}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Adjust Project Dice</button>
       <i class="fas fa-arrow-right qyc-turn-arrow" aria-hidden="true"></i>
       <button type="button" data-action="takeAction" data-week="{{week}}" {{#unless canTakeAction}}disabled{{/unless}}><i class="fas fa-list-check"></i> Take Action</button>
     </div>
@@ -24,7 +24,7 @@
           {{#if weekActions}}
             <div class="qyc-action-taken">
               {{#each weekActions}}
-                <span class="qyc-action-chip">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-action="undoAction" data-index="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
+                <span class="qyc-action-chip" title="{{label}}">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-action="undoAction" data-index="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
               {{/each}}
             </div>
           {{else}}

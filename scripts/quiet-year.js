@@ -545,6 +545,11 @@ function freshState() {
     // One entry per week — the card drawn, and the actions taken against it.
     log: [],
     currentCard: null,
+    // The week whose project dice have been adjusted — step 2 of a turn, which
+    // leaves no other trace in the state. A number rather than a flag on the
+    // week so undoing a tick restores one scalar and cannot take the week's
+    // recorded actions down with it.
+    tickedWeek: 0,
     abundances: [],
     scarcities: [],
     projects: [],
@@ -613,6 +618,21 @@ const WEEK_ACTIONS = {
 function currentWeek(state) {
   const log = state.log || [];
   return log.length ? log[log.length - 1] : null;
+}
+
+// Weeks logged before an action could carry a note hold plain kind strings.
+// Normalize on read rather than migrating the setting, the same way
+// projectStatus() does — a year in progress keeps working either way.
+function weekActions(week) {
+  return (week?.actions || [])
+    .map(entry => (typeof entry === "string" ? { kind: entry, note: "" } : { kind: entry?.kind, note: entry?.note || "" }))
+    .filter(entry => WEEK_ACTIONS[entry.kind]);
+}
+
+// The label as it reads in a chip and in the year's log: the action, and what
+// was written down about it.
+function weekActionLabel({ kind, note }) {
+  return note ? `${WEEK_ACTIONS[kind]} — ${note}` : WEEK_ACTIONS[kind];
 }
 
 // A project is "active" until it either runs its die out (or is finished early)
@@ -1007,11 +1027,11 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const reduction = Math.max(1, Math.floor(Number(weeks) || 1));
   const state = getState();
+  const beforeFields = snapshotFields(state, ["tickedWeek"]);
   // Captured per project as the loop reaches it, just before it is changed.
   const before = [];
   const completed = [];
-  // A tick that found nothing to count down changed nothing, and an undo entry
-  // for it would push a real one off the end of the stack.
+  // Whether any die actually moved — only that is worth announcing.
   let touched = false;
   // Only active projects count down. A cancelled project still has weeks left
   // on its die and would otherwise tick its way to zero and announce itself
@@ -1027,8 +1047,14 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
       }
     }
   }
+  // Step 2 of the turn is done for this week, whether or not there was anything
+  // left to count down. Deriving that from "no project has weeks on it" instead
+  // would un-take the step the moment the week's action started a project.
+  if (state.week) state.tickedWeek = state.week;
   await setState(state);
-  if (touched) await pushUndo(undoEntry(reduction > 1 ? `Reduce projects by ${reduction}` : "Tick Projects", {}, { projects: before }));
+  // A tick that reduced nothing still moved the week on a step, so it is worth
+  // an undo entry of its own — without one the turn could not be walked back.
+  await pushUndo(undoEntry(reduction > 1 ? `Reduce projects by ${reduction}` : "Tick Projects", beforeFields, { projects: before }));
   const message = await announceCompleted(completed);
   if (touched && message?.id) await attachUndoMessage(message.id);
 });
@@ -1115,7 +1141,7 @@ const setProjectStatus = serialized(async function setProjectStatus(id, status) 
 // on screen. Without it this would record against whatever the last log entry
 // happens to be when the queued task runs — and a draw can slip in ahead of it,
 // putting the action on the following week and burning that week's allowance.
-const recordAction = serialized(async function recordAction(kind, { week: number, silent = false } = {}) {
+const recordAction = serialized(async function recordAction(kind, { week: number, note = "", silent = false } = {}) {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
   if (!WEEK_ACTIONS[kind]) return;
   const state = getState();
@@ -1131,9 +1157,27 @@ const recordAction = serialized(async function recordAction(kind, { week: number
     if (!silent) ui.notifications.warn(`Week ${week.week} already has its actions recorded.`);
     return;
   }
-  week.actions.push(kind);
+  week.actions.push({ kind, note: String(note || "").trim() });
   await setState(state);
 });
+
+// Starting a project is one of the three things a week's action can be, so the
+// two ways in — the panel's add row and the Take Action dialog — go through the
+// same pair of writes rather than each assembling their own. The name is kept
+// as the action's note too, so the year's log says which project was started
+// rather than only that one was.
+function startProject(name, weeks, week, { silent = true } = {}) {
+  return queueTrackerWrite(async () => {
+    const state = getState();
+    state.projects.push({
+      id: foundry.utils.randomID(),
+      name,
+      weeks: Math.min(6, Math.max(1, Number(weeks) || 1)),
+      status: "active"
+    });
+    await setState(state);
+  }).then(() => recordAction("project", { week, note: name, silent }));
+}
 
 const undoAction = serialized(async function undoAction(index) {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
@@ -1524,6 +1568,18 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     const seasonKey = state.season || "spring";
     const week = currentWeek(state);
     const allowance = week?.allowance || 1;
+    const actions = weekActions(week);
+
+    // The turn bar walks the week's three steps in order, so each button knows
+    // both whether its step is this week's next one and whether it has been
+    // taken. A step already done, or not yet reached, is disabled rather than
+    // hidden: the sequence stays legible, and a player sees the same shape.
+    const gm = game.user.isGM && !state.gameOver;
+    // Step 2 is taken, not inferred: a week with no project to count down still
+    // has to be walked past, because inferring it from "nothing left to tick"
+    // would un-take the step the moment the week's action started a project.
+    const tickDone = !!week && state.tickedWeek === state.week;
+    const actionsSpent = !!week && actions.length >= allowance;
     return {
       isGM: game.user.isGM,
       state,
@@ -1557,16 +1613,21 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       week: state.week || 0,
       hasWeek: !!state.week,
       // Both the record of this week and what is still open on it.
-      weekActions: (week?.actions || []).map((kind, index) => ({ index, label: WEEK_ACTIONS[kind] })),
+      weekActions: actions.map((entry, index) => ({ index, label: weekActionLabel(entry) })),
       // Summer's King is the only card that grants two, so the count is worth
       // spelling out only when there is more than one to take.
-      allowanceLabel: allowance > 1 ? `${(week?.actions || []).length} of ${allowance} actions taken` : "",
-      canTakeAction: game.user.isGM && !!week && (week.actions || []).length < allowance,
+      allowanceLabel: allowance > 1 ? `${actions.length} of ${allowance} actions taken` : "",
+      // Step 1: only with the week before it finished, or before any week.
+      canDraw: gm && (!week || (tickDone && actionsSpent)),
+      // Step 2: once a card is on the table, until the dice have been adjusted.
+      canTick: gm && !!week && !tickDone,
+      // Step 3: after the dice, until the week's action allowance is spent.
+      canTakeAction: gm && !!week && tickDone && !actionsSpent,
       log: [...(state.log || [])].reverse().map(entry => ({
         week: entry.week,
         season: SEASON_LABELS[entry.season],
         card: entry.card,
-        actions: (entry.actions || []).map(kind => WEEK_ACTIONS[kind]).join(", ")
+        actions: weekActions(entry).map(weekActionLabel).join(", ")
       })),
       hasLog: !!(state.log || []).length,
       resources: Object.entries(RESOURCE_LISTS).map(([kind, label]) => ({
@@ -1670,35 +1731,78 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   }
 
   /**
-   * Step 3 of the week is one of two choices, so the button asks which rather
-   * than spelling both across the turn bar.
+   * Step 3 of the week asks which of the three things the community did, and
+   * lets whatever was said about it be written down beside the choice. A
+   * project is startable from here too: choosing it makes the note the
+   * project's name and reveals its die, so the action and the project it
+   * created are one act rather than two the GM has to remember to pair.
    *
    * The week is read off the button that was on screen, before the dialog opens
    * and before anything is awaited, rather than being resolved when the write
-   * runs: the queue can put a draw in front of this, and "the current week" by
-   * then is the next one — which would record the action against the wrong week
-   * and spend that week's allowance. Sitting behind a dialog only widens the
-   * gap this is guarding.
+   * runs: the queue can put a draw in front of the record, and "the current
+   * week" by then is the next one — which would record the action against the
+   * wrong week and spend that week's allowance. A dialog only widens the gap
+   * this is guarding.
    * @this {QuietYearPlaySurface}
    */
   static async #onTakeAction(event, target) {
     const week = Number(target.dataset.week);
-    // "Started a project" is not offered: adding a project records it, so
-    // choosing it here would be a second way to spend the week on the same act.
-    const choices = Object.entries(WEEK_ACTIONS).filter(([kind]) => kind !== "project");
-    const choice = await foundry.applications.api.DialogV2.wait({
+    const choices = Object.entries(WEEK_ACTIONS)
+      .map(([kind, label], index) => `<label class="qyc-choice"><input type="radio" name="kind" value="${kind}"${index === 0 ? " checked" : ""}> ${label}</label>`)
+      .join("");
+    const result = await foundry.applications.api.DialogV2.wait({
       window: { title: "Take an Action" },
-      content: `<div class="quiet-year-cobalt-dialog"><p>What did the community do in week ${week}?</p>`
-        + `<p class="notes">Starting a project records itself, so it is not offered here.</p></div>`,
+      content: `<div class="quiet-year-cobalt-dialog qyc-action-form">
+        <p>What did the community do in week ${week}?</p>
+        <div class="qyc-choices">${choices}</div>
+        <label class="qyc-field"><span data-note-label>Note</span>
+          <input type="text" name="note" placeholder="What was discovered, decided, or said">
+        </label>
+        <label class="qyc-field" data-weeks-field hidden><span>Weeks on the die</span>
+          <input type="number" name="weeks" min="1" max="6" value="3">
+        </label>
+      </div>`,
+      render: (renderEvent, dialog) => {
+        const form = dialog.element.querySelector("form") || dialog.element;
+        const noteLabel = form.querySelector("[data-note-label]");
+        const weeksField = form.querySelector("[data-weeks-field]");
+        const note = form.elements.note;
+        const sync = () => {
+          const project = form.elements.kind.value === "project";
+          weeksField.hidden = !project;
+          noteLabel.textContent = project ? "Project name" : "Note";
+          note.placeholder = project ? "What are they building?" : "What was discovered, decided, or said";
+        };
+        form.addEventListener("change", sync);
+        sync();
+        // The default button carries `autofocus`, which lands after this runs —
+        // wait a frame so the field the GM actually wants to type in wins.
+        requestAnimationFrame(() => note.focus());
+      },
       buttons: [
-        ...choices.map(([action, label], index) => ({ action, label, default: index === 0 })),
-        { action: "cancel", label: "Never mind" }
+        {
+          action: "record",
+          label: "Record",
+          default: true,
+          // The value this returns is what wait() resolves to.
+          callback: (submitEvent, button) => ({
+            kind: button.form.elements.kind.value,
+            note: button.form.elements.note.value.trim(),
+            weeks: Number(button.form.elements.weeks.value)
+          })
+        }
       ]
     });
     // Dismissing the window resolves to null rather than rejecting: rejectClose
-    // defaults to false.
-    if (!choice || choice === "cancel") return;
-    recordAction(choice, { week }).catch(reportTrackerFailure);
+    // defaults to false. There is no cancel button — the window's own close
+    // control is the way out, and it lands here as that null.
+    if (!result) return;
+
+    const { kind, note, weeks } = result;
+    if (kind !== "project") return recordAction(kind, { week, note }).catch(reportTrackerFailure);
+    // A project with no name would land on the tracker as a nameless die.
+    if (!note) return ui.notifications.warn("Give the project a name.");
+    startProject(note, weeks, week, { silent: false }).catch(reportTrackerFailure);
   }
 
   /** @this {QuietYearPlaySurface} */
@@ -1747,16 +1851,10 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     const week = Number(target.dataset.week) || undefined;
     if (!name) return ui.notifications.warn("Give the project a name.");
     this._clearDirty("new-project-name", "new-project-weeks");
-    queueTrackerWrite(async () => {
-      const state = getState();
-      state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
-      await setState(state);
-    })
-      // Silent: several cards call for a project as part of their own prompt
-      // rather than as the week's action, and the chip can be taken off again
-      // when this was one of those.
-      .then(() => recordAction("project", { week, silent: true }))
-      .catch(reportTrackerFailure);
+    // Silent: several cards call for a project as part of their own prompt
+    // rather than as the week's action, and the chip can be taken off again
+    // when this was one of those.
+    startProject(name, weeks, week).catch(reportTrackerFailure);
   }
 
   /** @this {QuietYearPlaySurface} */
