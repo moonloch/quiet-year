@@ -70,7 +70,11 @@
    as a tail on the week's own line made it the smaller fact of the two. Game
    over, when there is one, lands between them. */
 .qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
-.qyc-week, .qyc-season-row .qyc-season { font-size: 1.1em; }
+.qyc-week { font-size: 1.1em; }
+/* The season carries the same ink as the quieted buttons in the lists below.
+   It is a statement rather than a control, but it belongs to the panel's
+   second tier and matching them is what says so. */
+.qyc-season { font-size: 1.1em; color: var(--button-text-color, #e7d1b1); opacity: .5; }
 .qyc-week-action { display: flex; flex-direction: column; gap: 5px; }
 /* One line per action, marked rather than boxed: the week's record is read,
    not operated, so it wants no more furniture than a bullet. */
