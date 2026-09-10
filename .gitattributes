@@ -1,0 +1,10 @@
+# Keep the development scaffolding out of `git archive` output, which is what
+# GitHub builds the "Source code" downloads on a release from. Those archives
+# are how people install this module, so they should hold only what Foundry
+# needs to run it.
+.gitattributes export-ignore
+.gitignore export-ignore
+.claude/ export-ignore
+.github/ export-ignore
+.idea/ export-ignore
+AGENTS.md export-ignore
