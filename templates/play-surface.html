@@ -53,17 +53,14 @@
             <strong>{{label}}</strong>
             {{#each entries}}
               <div class="qyc-resource-row">
-                <input type="text" class="qyc-inline-edit" value="{{value}}" title="{{value}}" name="{{field}}" data-resource-edit="{{kind}}:{{index}}" data-resource-previous="{{value}}" {{#unless ../../isGM}}readonly{{/unless}}>
+                <input type="text" class="qyc-inline-edit" value="{{value}}" title="{{value}}" placeholder="{{../placeholder}}" name="{{field}}" data-resource-edit="{{kind}}:{{index}}" data-resource-previous="{{value}}" {{#unless ../../isGM}}readonly{{/unless}}>
                 {{#if ../../isGM}}<button type="button" class="qyc-icon-button" data-action="removeResource" data-kind="{{kind}}" data-index="{{index}}" data-previous="{{value}}" title="Remove {{value}}"><i class="fas fa-trash"></i></button>{{/if}}
               </div>
             {{else}}
               <p class="qyc-muted">None yet.</p>
             {{/each}}
             {{#if ../isGM}}
-            <div class="qyc-resource-add">
-              <input type="text" name="{{newField}}" placeholder="{{placeholder}}" data-add-on-enter="[data-action='addResource'][data-kind='{{kind}}']">
-              <button type="button" class="qyc-icon-button" data-action="addResource" data-kind="{{kind}}" title="{{placeholder}}"><i class="fas fa-plus"></i></button>
-            </div>
+            <button type="button" class="qyc-add-row" data-action="addResource" data-kind="{{kind}}"><i class="fas fa-plus"></i> {{addLabel}}</button>
             {{/if}}
           </div>
           {{/each}}
@@ -86,7 +83,7 @@
                   {{/if}}
                 {{/if}}
               </span>
-              <input type="text" class="qyc-inline-edit qyc-project-name" name="{{field}}" value="{{name}}" title="{{name}}" data-project-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
+              <input type="text" class="qyc-inline-edit qyc-project-name" name="{{field}}" value="{{name}}" title="{{name}}" placeholder="{{../projectPlaceholder}}" data-project-rename="{{id}}" {{#unless ../isGM}}readonly{{/unless}}>
               <span class="qyc-project-controls">
                 {{#if statusLabel}}<span class="qyc-project-status">{{statusLabel}}</span>{{/if}}
                 {{#if isActive}}
@@ -100,11 +97,7 @@
           {{#unless hasActiveProjects}}<p class="qyc-muted">No projects underway.</p>{{/unless}}
         </div>
         {{#if isGM}}
-        <div class="qyc-add-project">
-          <input type="text" name="new-project-name" placeholder="New project" data-add-on-enter="[data-action='addProject']">
-          <input type="number" name="new-project-weeks" min="1" max="6" value="3">
-          <button type="button" data-action="addProject" data-week="{{week}}" title="Start a project"><i class="fas fa-plus"></i></button>
-        </div>
+        <button type="button" class="qyc-add-row" data-action="addProject" data-week="{{week}}"><i class="fas fa-plus"></i> Add Project</button>
         {{#if hasActiveProjects}}
         <div class="qyc-reduce-projects">
           <span class="qyc-muted">Reduce every project by</span>
@@ -128,7 +121,7 @@
           </div>
         {{/each}}
         {{#if isGM}}
-        <button type="button" class="qyc-add-player" data-action="addContempt"><i class="fas fa-user-plus"></i> Add Player</button>
+        <button type="button" class="qyc-add-row" data-action="addContempt"><i class="fas fa-user-plus"></i> Add Player</button>
         {{/if}}
       </section>
     </div>

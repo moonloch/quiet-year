@@ -1096,11 +1096,9 @@ const renameProject = serialized(async function renameProject(id, name) {
   // sitting in the field and is no longer held as a draft. Without this the
   // surface would keep showing a name the world does not have until some
   // unrelated change happened to re-render it.
+  // Blank is allowed for the same reason it is on a resource row: the panel
+  // adds the project first and the name is typed into it afterwards.
   const trimmed = String(name).trim();
-  if (!trimmed) {
-    ui.notifications.warn("A project needs a name.");
-    return refreshPlaySurface();
-  }
   const state = getState();
   const project = (state.projects || []).find(p => p.id === id);
   if (!project) {
@@ -1162,10 +1160,12 @@ const recordAction = serialized(async function recordAction(kind, { week: number
 });
 
 // Starting a project is one of the three things a week's action can be, so the
-// two ways in — the panel's add row and the Take Action dialog — go through the
-// same pair of writes rather than each assembling their own. The name is kept
-// as the action's note too, so the year's log says which project was started
-// rather than only that one was.
+// two ways in — the panel's add button and the Take Action dialog — go through
+// the same pair of writes rather than each assembling their own. The name is
+// kept as the action's note too, so the year's log says which project was
+// started rather than only that one was — the note records what was known when
+// the action was taken, so a row added nameless from the panel logs the plain
+// "Started a project" and naming it afterwards does not rewrite the year.
 function startProject(name, weeks, week, { silent = true } = {}) {
   return queueTrackerWrite(async () => {
     const state = getState();
@@ -1214,26 +1214,23 @@ function resourceIndex(list, index, previous) {
   return nearest;
 }
 
-const addResource = serialized(async function addResource(kind, value) {
+// The default is the whole of the panel's add button: a row arrives empty and
+// is named in place, the way a project row is.
+const addResource = serialized(async function addResource(kind, value = "") {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
   if (!RESOURCE_LISTS[kind]) return;
-  const trimmed = String(value).trim();
-  if (!trimmed) return ui.notifications.warn(`Name the new ${RESOURCE_LISTS[kind]}.`);
   const state = getState();
-  state[kind] = [...(state[kind] || []), trimmed];
+  state[kind] = [...(state[kind] || []), String(value).trim()];
   await setState(state);
 });
 
 const renameResource = serialized(async function renameResource(kind, index, value, previous) {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
   if (!RESOURCE_LISTS[kind]) return;
+  // Blank is allowed rather than refused: rows are added empty and named in
+  // place, so an empty field is one nobody has got to yet rather than a mistake
+  // to warn about. Blank is still not a removal — the trash button is.
   const trimmed = String(value).trim();
-  // Blank is not a removal — there is a button for that — so the field goes
-  // back to what the world holds, as a project rename does.
-  if (!trimmed) {
-    ui.notifications.warn(`${RESOURCE_LISTS[kind]} entries need a name.`);
-    return refreshPlaySurface();
-  }
   const state = getState();
   const list = state[kind] || [];
   const at = resourceIndex(list, index, previous);
@@ -1405,6 +1402,10 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     // against this is how an uncommitted draft learns it has been overtaken.
     this._renderedValues = {};
     this._previousRenderedValues = {};
+    // A selector for the field to put the caret in once the render carrying it
+    // arrives — set when a button adds a row, since the row it adds is empty and
+    // the next thing anyone wants is to type its name.
+    this._pendingFocus = null;
   }
 
   static DEFAULT_OPTIONS = {
@@ -1598,6 +1599,8 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       // Several cards branch on "if there are no projects underway", so the
       // notice has to key off the active ones, not off an empty list.
       hasActiveProjects: activeProjects(state).length > 0,
+      // See the resource placeholders below.
+      projectPlaceholder: game.user.isGM ? "Name this project" : "",
       contempt: (state.contempt || []).map((entry, index) => {
         const id = contemptId(entry, index);
         return { id, name: entry.name, count: Number(entry.count || 0), field: `contempt-${id}-name` };
@@ -1634,8 +1637,11 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
         kind,
         // The keys are already the plurals the columns are headed with.
         label: kind.charAt(0).toUpperCase() + kind.slice(1),
-        placeholder: `New ${label.toLowerCase()}`,
-        newField: `new-${kind}`,
+        // The empty row's own prompt, and the button that makes one. A player
+        // gets no prompt: their rows are read-only, and ghost text inviting them
+        // to name one would be an invitation to nothing.
+        placeholder: game.user.isGM ? `New ${label.toLowerCase()}` : "",
+        addLabel: `Add ${label}`,
         entries: (state[kind] || []).map((value, index) => ({ kind, value, index, field: `${kind}-${index}` }))
       }))
     };
@@ -1698,12 +1704,16 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       return renameResource(kind, Number(index), value, el.dataset.resourcePrevious);
     });
 
-    // Every other field here commits on Enter, so the add boxes do too.
-    root.querySelectorAll("[data-add-on-enter]").forEach(el => el.addEventListener("keydown", ev => {
-      if (ev.key !== "Enter") return;
-      ev.preventDefault();
-      root.querySelector(ev.currentTarget.dataset.addOnEnter)?.click();
-    }));
+    // The row an add button just made. Both lists append, so of the fields the
+    // selector matches it is the last one that is new. Consumed whichever render
+    // gets here first — a render this add did not cause is near enough the same
+    // moment, and leaving it armed would let it steal the caret later, in the
+    // middle of something else.
+    if (this._pendingFocus) {
+      const added = [...root.querySelectorAll(this._pendingFocus)].at(-1);
+      this._pendingFocus = null;
+      added?.focus();
+    }
   }
 
   /* -------------------------------------------- */
@@ -1811,21 +1821,23 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   }
 
   /**
-   * The form is read here, synchronously, and only the state change is queued —
-   * a deferred read would take its values from whatever the field holds by then,
-   * including a draft _restoreDrafts has since discarded in favour of someone
-   * else's committed value.
+   * Adds the row and puts the caret in it, rather than asking for the name in a
+   * box beside the button and adding a row once it is filled in. The row is the
+   * only place the entry is ever edited afterwards, so making it the place it is
+   * written in the first place leaves one field to learn instead of two, and one
+   * that saves the same way every time.
    * @this {QuietYearPlaySurface}
    */
   static #onAddResource(event, target) {
     if (!game.user.isGM) return;
     const kind = target.dataset.kind;
-    const field = `new-${kind}`;
-    const input = this.element.querySelector(`[name="${field}"]`);
-    const value = input?.value ?? "";
-    this._clearDirty(field);
-    if (input) input.value = "";
-    addResource(kind, value).catch(reportTrackerFailure);
+    this._pendingFocus = `[data-resource-edit^="${kind}:"]`;
+    // A write that never lands leaves no row to focus, and an armed selector
+    // would go off on some later render instead.
+    addResource(kind).catch(err => {
+      this._pendingFocus = null;
+      reportTrackerFailure(err);
+    });
   }
 
   /**
@@ -1842,19 +1854,25 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     removeResource(target.dataset.kind, Number(target.dataset.index), previous).catch(reportTrackerFailure);
   }
 
-  /** @this {QuietYearPlaySurface} */
+  /**
+   * As with a resource: the row appears first and is named in it. The die starts
+   * at three weeks — the middle of the one-to-six range, and the length most
+   * cards that call for a project ask for — and the row's own − and + are how it
+   * is changed, so the add button has nothing left to ask for.
+   * @this {QuietYearPlaySurface}
+   */
   static #onAddProject(event, target) {
     if (!game.user.isGM) return;
-    const name = this.element.querySelector('[name="new-project-name"]')?.value?.trim();
-    const weeks = Number(this.element.querySelector('[name="new-project-weeks"]')?.value || 1);
     // The week as it was on screen when the button was pressed.
     const week = Number(target.dataset.week) || undefined;
-    if (!name) return ui.notifications.warn("Give the project a name.");
-    this._clearDirty("new-project-name", "new-project-weeks");
+    this._pendingFocus = "[data-project-rename]";
     // Silent: several cards call for a project as part of their own prompt
     // rather than as the week's action, and the chip can be taken off again
     // when this was one of those.
-    startProject(name, weeks, week).catch(reportTrackerFailure);
+    startProject("", 3, week).catch(err => {
+      this._pendingFocus = null;
+      reportTrackerFailure(err);
+    });
   }
 
   /** @this {QuietYearPlaySurface} */
