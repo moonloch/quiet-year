@@ -143,23 +143,24 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
   border-color: var(--color-border-light-2, #555);
 }
 .qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button):disabled { opacity: .25; }
-/* Adding is one button under each list: it appends an empty row and the caret
-   lands in it, so a list is added to in the same field it is edited in. Every
-   list ends with one, so they are all the same control. */
-.qyc-add-row { margin-top: 8px; }
+/* Adding is one button at the head of each list, opposite its title: it appends
+   an empty row and the caret lands in it, so a list is added to in the same
+   field it is edited in. Every list is headed by one, so they are all the same
+   control, and the button does not move as the list grows. */
+.qyc-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.qyc-section-head h2 { margin: 0; }
 /* Both number fields hold a week count of one or two digits in a box wide
    enough for four, so left-aligned they read as text someone typed rather than
    as the value the stepper beside them is about to change. */
 .qyc-panel input[type="number"] { text-align: center; }
 .qyc-reduce-projects { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 5px; align-items: center; }
 .qyc-reduce-projects .qyc-muted { text-align: right; }
-.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+/* Abundances and Scarcities are two lists, not one table: the gap between them
+   has to be wider than the gap between a row and the row under it, or a name in
+   one column reads as belonging with the name beside it. */
+.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 .qyc-resource-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .qyc-resource-row { display: grid; grid-template-columns: 1fr 28px; gap: 4px; align-items: center; }
-/* The column has a gap of its own, so the button needs only the rest of it.
-   Left-aligned at its own width rather than stretched across the column, so it
-   reads as the same control as the Add under Projects and Contempt. */
-.qyc-resource-column .qyc-add-row { margin-top: 4px; align-self: start; }
 /* The trailing column holds the GM's remove button and collapses to nothing on
    a player's client, where the row is not editable. */
 .qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px auto; gap: 5px; align-items: center; margin-bottom: 5px; }
