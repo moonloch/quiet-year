@@ -18,18 +18,14 @@
 
   <div class="qyc-panel-columns">
     <div class="qyc-panel-column">
-      {{#if hasWeek}}
+      {{#if weekActions}}
       <section class="qyc-turn">
         <div class="qyc-week-action">
-          {{#if weekActions}}
-            <div class="qyc-action-taken">
-              {{#each weekActions}}
-                <span class="qyc-action-chip" title="{{label}}">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-action="undoAction" data-index="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
-              {{/each}}
-            </div>
-          {{else}}
-            <p class="qyc-muted">No action recorded this week. Starting a project records itself.</p>
-          {{/if}}
+          <div class="qyc-action-taken">
+            {{#each weekActions}}
+              <span class="qyc-action-chip" title="{{label}}">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-action="undoAction" data-index="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
+            {{/each}}
+          </div>
           {{#if allowanceLabel}}<p class="qyc-muted">{{allowanceLabel}}</p>{{/if}}
         </div>
       </section>
