@@ -1,11 +1,9 @@
 <div class="qyc-panel">
   <header class="qyc-turn-bar">
     <div class="qyc-season-row">
-      <div>
-        {{#if hasWeek}}<strong class="qyc-week">Week {{week}}</strong>{{else}}<strong class="qyc-week">Before the first week</strong>{{/if}}
-        <span class="qyc-muted">{{seasonLabel}}, {{remaining}} cards remain</span>
-      </div>
+      {{#if hasWeek}}<strong class="qyc-week">Week {{week}}</strong>{{else}}<strong class="qyc-week">Before the first week</strong>{{/if}}
       {{#if gameOver}}<div class="qyc-game-over">THE QUIET YEAR IS OVER</div>{{/if}}
+      <span class="qyc-muted qyc-season">{{seasonLabel}}, {{remaining}} cards remain</span>
     </div>
     <div class="qyc-turn-steps">
       <button type="button" data-action="draw" {{#unless canDraw}}disabled{{/unless}}><i class="fas fa-cards-blank"></i> Draw Card</button>

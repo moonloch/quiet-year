@@ -65,8 +65,12 @@
 
 .qyc-muted { opacity: 0.68; font-size: 0.9em; }
 .qyc-game-over { font-weight: 800; letter-spacing: .05em; }
-.qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.qyc-week { font-size: 1.1em; }
+/* The week on one end of the bar and the season on the other, at the same size:
+   they are the two halves of where the year has got to, and reading the season
+   as a tail on the week's own line made it the smaller fact of the two. Game
+   over, when there is one, lands between them. */
+.qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
+.qyc-week, .qyc-season-row .qyc-season { font-size: 1.1em; }
 .qyc-week-action { display: flex; flex-direction: column; gap: 5px; }
 /* One line per action, marked rather than boxed: the week's record is read,
    not operated, so it wants no more furniture than a bullet. */
