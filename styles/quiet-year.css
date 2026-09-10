@@ -68,9 +68,11 @@
 .qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
 .qyc-week { font-size: 1.1em; }
 .qyc-week-action { display: flex; flex-direction: column; gap: 5px; }
-.qyc-action-taken { display: flex; flex-wrap: wrap; gap: 5px; }
-.qyc-action-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; border: 1px solid var(--color-border-light-2, #555); border-radius: 999px; font-size: .85em; }
-.qyc-chip-remove { width: 18px; min-width: 18px; height: 18px; padding: 0; line-height: 1; border: none; background: none; font-size: 1em; }
+/* One line per action, marked rather than boxed: the week's record is read,
+   not operated, so it wants no more furniture than a bullet. */
+.qyc-action-taken { display: flex; flex-direction: column; gap: 3px; }
+.qyc-action-line { margin: 0; }
+.qyc-action-line i { font-size: .55em; vertical-align: middle; opacity: .6; }
 .qyc-week-action .qyc-muted { margin: 0; }
 .qyc-history summary { cursor: pointer; font-weight: 700; }
 .qyc-history-list { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }

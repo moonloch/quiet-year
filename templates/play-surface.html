@@ -23,7 +23,7 @@
         <div class="qyc-week-action">
           <div class="qyc-action-taken">
             {{#each weekActions}}
-              <span class="qyc-action-chip" title="{{label}}">{{label}}{{#if ../isGM}}<button type="button" class="qyc-chip-remove" data-action="undoAction" data-index="{{index}}" title="Not this week's action after all">×</button>{{/if}}</span>
+              <p class="qyc-action-line"><i class="fas fa-diamond" aria-hidden="true"></i> {{this}}</p>
             {{/each}}
           </div>
           {{#if allowanceLabel}}<p class="qyc-muted">{{allowanceLabel}}</p>{{/if}}

@@ -1179,12 +1179,18 @@ function startProject(name, weeks, week, { silent = true } = {}) {
   }).then(() => recordAction("project", { week, note: name, silent }));
 }
 
-const undoAction = serialized(async function undoAction(index) {
+// Takes the week's most recent action off its record. Reached only from the
+// header menu, which hands a handler the <li> that was clicked rather than a
+// button carrying a payload, so it takes no index: the last one recorded is the
+// one anybody wants back. It does not touch a project the action started —
+// several cards call for a project as part of their own prompt, and taking the
+// action off is how the GM says this was one of those.
+const undoLastAction = serialized(async function undoLastAction() {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
   const state = getState();
   const week = currentWeek(state);
-  if (!week || !week.actions[index]) return refreshPlaySurface();
-  week.actions.splice(index, 1);
+  if (!week?.actions?.length) return refreshPlaySurface();
+  week.actions.pop();
   await setState(state);
 });
 
@@ -1479,6 +1485,11 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     if (!game.user.isGM) return controls;
     const lastUndone = undoStack().at(-1);
     if (lastUndone) controls.push({ action: "undo", icon: "fas fa-clock-rotate-left", label: `Undo ${lastUndone.label}` });
+    // The week's record is read on the panel and edited here. Named by the kind
+    // alone rather than by weekActionLabel(): the note can be a sentence, and
+    // this is a menu entry.
+    const lastAction = weekActions(currentWeek(getState())).at(-1);
+    if (lastAction) controls.push({ action: "undoAction", icon: "fas fa-delete-left", label: `Undo ${WEEK_ACTIONS[lastAction.kind]}` });
     controls.push({ action: "reset", icon: "fas fa-rotate-left", label: "Reset Year" });
     return controls;
   }
@@ -1615,8 +1626,9 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       gameOver: !!state.gameOver,
       week: state.week || 0,
       hasWeek: !!state.week,
-      // Both the record of this week and what is still open on it.
-      weekActions: actions.map((entry, index) => ({ index, label: weekActionLabel(entry) })),
+      // What the week has on its record, read out rather than made removable:
+      // it is what happened, and the panel is not where it gets edited.
+      weekActions: actions.map(weekActionLabel),
       // Summer's King is the only card that grants two, so the count is worth
       // spelling out only when there is more than one to take.
       allowanceLabel: allowance > 1 ? `${actions.length} of ${allowance} actions taken` : "",
@@ -1736,6 +1748,11 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   }
 
   /** @this {QuietYearPlaySurface} */
+  static #onUndoAction() {
+    undoLastAction().catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
   static #onReset() {
     resetYear().catch(reportTrackerFailure);
   }
@@ -1813,11 +1830,6 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     // A project with no name would land on the tracker as a nameless die.
     if (!note) return ui.notifications.warn("Give the project a name.");
     startProject(note, weeks, week, { silent: false }).catch(reportTrackerFailure);
-  }
-
-  /** @this {QuietYearPlaySurface} */
-  static #onUndoAction(event, target) {
-    undoAction(Number(target.dataset.index)).catch(reportTrackerFailure);
   }
 
   /**
