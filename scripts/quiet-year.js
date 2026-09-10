@@ -1361,41 +1361,6 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     // against this is how an uncommitted draft learns it has been overtaken.
     this._renderedValues = {};
     this._previousRenderedValues = {};
-    // Whether the Take Action menu is open. Kept on the instance rather than
-    // read off the DOM because every render rebuilds the markup closed, and a
-    // render arriving from another client must not shut a menu someone is
-    // reading. Reapplied in _onRender, the same way a draft is.
-    this._actionMenuOpen = false;
-    // Bound once so add/removeEventListener see the same reference. Anything
-    // outside the Take Action group — including the rest of the window — closes
-    // the menu; pointerdown rather than click so it settles before the button
-    // under the pointer acts on it.
-    this._onPointerDownOutsideMenu = ev => {
-      const el = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
-      if (el?.closest(".qyc-take-action")) return;
-      this._setActionMenu(false);
-    };
-    this._onKeyDownWhileMenuOpen = ev => {
-      if (ev.key !== "Escape") return;
-      this._setActionMenu(false);
-      this.element?.querySelector("[data-action='toggleActionMenu']")?.focus();
-    };
-  }
-
-  /**
-   * Show or hide the Take Action menu, and keep the document-level listeners
-   * that dismiss it bound only while it is open. Called from the toggle, from
-   * recording an action, from every render (to reassert the remembered state
-   * over freshly rendered markup) and from close.
-   */
-  _setActionMenu(open) {
-    this._actionMenuOpen = open;
-    const menu = this.element?.querySelector(".qyc-action-menu");
-    if (menu) menu.hidden = !open;
-    this.element?.querySelector("[data-action='toggleActionMenu']")?.setAttribute("aria-expanded", String(open));
-    const method = open ? "addEventListener" : "removeEventListener";
-    document[method]("pointerdown", this._onPointerDownOutsideMenu, true);
-    document[method]("keydown", this._onKeyDownWhileMenuOpen, true);
   }
 
   static DEFAULT_OPTIONS = {
@@ -1417,8 +1382,7 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       tickProjects: QuietYearPlaySurface.#onTickProjects,
       undo: QuietYearPlaySurface.#onUndo,
       reset: QuietYearPlaySurface.#onReset,
-      toggleActionMenu: QuietYearPlaySurface.#onToggleActionMenu,
-      recordAction: QuietYearPlaySurface.#onRecordAction,
+      takeAction: QuietYearPlaySurface.#onTakeAction,
       undoAction: QuietYearPlaySurface.#onUndoAction,
       addResource: QuietYearPlaySurface.#onAddResource,
       removeResource: QuietYearPlaySurface.#onRemoveResource,
@@ -1516,11 +1480,6 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   // The first render has no prior element, so neither sync hook runs for it.
   // Seed the baseline here instead, or the second render reads every field as
   // newly changed.
-  /** Leave nothing bound on the document behind a closed window. */
-  _onClose(options) {
-    this._setActionMenu(false);
-  }
-
   _onFirstRender(context, options) {
     this._recordRenderedValues(this.element);
   }
@@ -1610,9 +1569,6 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
         actions: (entry.actions || []).map(kind => WEEK_ACTIONS[kind]).join(", ")
       })),
       hasLog: !!(state.log || []).length,
-      actionChoices: Object.entries(WEEK_ACTIONS)
-        .filter(([kind]) => kind !== "project")
-        .map(([kind, label]) => ({ kind, label })),
       resources: Object.entries(RESOURCE_LISTS).map(([kind, label]) => ({
         kind,
         // The keys are already the plurals the columns are headed with.
@@ -1629,10 +1585,6 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   // are bound again here every time.
   _onRender(context, options) {
     const root = this.element;
-
-    // The template always renders the menu closed, so a render landing while it
-    // is open would shut it under whoever was reading it.
-    this._setActionMenu(this._actionMenuOpen);
 
     root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
       if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
@@ -1718,20 +1670,35 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   }
 
   /**
-   * The week comes off the button that was on screen rather than being resolved
-   * when the write runs: the queue can put a draw in front of this, and "the
-   * current week" by then is the next one — which would record the action
-   * against the wrong week and spend that week's allowance.
+   * Step 3 of the week is one of two choices, so the button asks which rather
+   * than spelling both across the turn bar.
+   *
+   * The week is read off the button that was on screen, before the dialog opens
+   * and before anything is awaited, rather than being resolved when the write
+   * runs: the queue can put a draw in front of this, and "the current week" by
+   * then is the next one — which would record the action against the wrong week
+   * and spend that week's allowance. Sitting behind a dialog only widens the
+   * gap this is guarding.
    * @this {QuietYearPlaySurface}
    */
-  static #onRecordAction(event, target) {
-    this._setActionMenu(false);
-    recordAction(target.dataset.kind, { week: Number(target.dataset.week) }).catch(reportTrackerFailure);
-  }
-
-  /** @this {QuietYearPlaySurface} */
-  static #onToggleActionMenu() {
-    this._setActionMenu(!this._actionMenuOpen);
+  static async #onTakeAction(event, target) {
+    const week = Number(target.dataset.week);
+    // "Started a project" is not offered: adding a project records it, so
+    // choosing it here would be a second way to spend the week on the same act.
+    const choices = Object.entries(WEEK_ACTIONS).filter(([kind]) => kind !== "project");
+    const choice = await foundry.applications.api.DialogV2.wait({
+      window: { title: "Take an Action" },
+      content: `<div class="quiet-year-cobalt-dialog"><p>What did the community do in week ${week}?</p>`
+        + `<p class="notes">Starting a project records itself, so it is not offered here.</p></div>`,
+      buttons: [
+        ...choices.map(([action, label], index) => ({ action, label, default: index === 0 })),
+        { action: "cancel", label: "Never mind" }
+      ]
+    });
+    // Dismissing the window resolves to null rather than rejecting: rejectClose
+    // defaults to false.
+    if (!choice || choice === "cancel") return;
+    recordAction(choice, { week }).catch(reportTrackerFailure);
   }
 
   /** @this {QuietYearPlaySurface} */

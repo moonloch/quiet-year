@@ -43,17 +43,7 @@
    their share out of one side. */
 .qyc-turn-steps { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 6px; }
 .qyc-turn-steps > button { min-width: 0; }
-.qyc-take-action { position: relative; display: flex; min-width: 0; }
-.qyc-take-action > button { flex: 1 1 auto; min-width: 0; }
-.qyc-turn-arrow { flex: 0 0 auto; opacity: .5; font-size: .85em; }
-.qyc-menu-caret { opacity: .7; font-size: .8em; }
-
-/* Anchored under the button rather than in the top layer, so it scrolls and
-   moves with the window. It opens downward into the panel and is flush with the
-   button's right edge, so neither the window's own overflow nor the panel's
-   right edge can clip it. */
-.qyc-action-menu { position: absolute; z-index: 10; top: calc(100% + 4px); right: 0; min-width: 100%; display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; background: var(--color-cool-5, #1c1c26); box-shadow: 0 6px 16px rgb(0 0 0 / 45%); }
-.qyc-action-menu button { white-space: nowrap; }
+.qyc-turn-arrow { opacity: .5; font-size: .85em; }
 /* Three buttons with their labels spelled out need more room than two columns
    of sections do, so the steps stack before the panel does. Stacked, an arrow
    pointing right points at nothing. */

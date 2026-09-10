@@ -12,14 +12,7 @@
       <i class="fas fa-arrow-right qyc-turn-arrow" aria-hidden="true"></i>
       <button type="button" data-action="tickProjects" {{#unless isGM}}disabled{{/unless}}><i class="fas fa-hourglass-half"></i> Adjust Project Dice</button>
       <i class="fas fa-arrow-right qyc-turn-arrow" aria-hidden="true"></i>
-      <div class="qyc-take-action">
-        <button type="button" data-action="toggleActionMenu" aria-haspopup="menu" aria-expanded="false" {{#unless canTakeAction}}disabled{{/unless}}><i class="fas fa-lips"></i> Take Action <i class="fas fa-caret-down qyc-menu-caret" aria-hidden="true"></i></button>
-        <div class="qyc-action-menu" role="menu" hidden>
-          {{#each actionChoices}}
-            <button type="button" role="menuitem" data-action="recordAction" data-kind="{{kind}}" data-week="{{../week}}" {{#unless ../canTakeAction}}disabled{{/unless}}>{{label}}</button>
-          {{/each}}
-        </div>
-      </div>
+      <button type="button" data-action="takeAction" data-week="{{week}}" {{#unless canTakeAction}}disabled{{/unless}}><i class="fas fa-lips"></i> Take Action</button>
     </div>
   </header>
 
