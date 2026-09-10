@@ -1,4 +1,15 @@
 .quiet-year-cobalt-dialog .notes { opacity: 0.9; }
+/* The Take Action form: three choices, a note, and the project die that only
+   the third one needs. Stacked in one column so the note reads as belonging to
+   whichever choice is selected above it. */
+/* The dialog sizes itself to its content, and a bare radio list is narrower
+   than the note beside it needs to be. */
+.qyc-action-form { display: flex; flex-direction: column; gap: 8px; min-width: 360px; }
+.qyc-action-form p { margin: 0; }
+.qyc-choices { display: flex; flex-direction: column; gap: 3px; }
+.qyc-choice { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+.qyc-choice input { flex: 0 0 auto; margin: 0; }
+.qyc-field { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 8px; }
 .quiet-year-cobalt-dialog code { user-select: all; }
 
 .quiet-year-cobalt .window-content { padding: 0; overflow: auto; }
@@ -32,24 +43,56 @@
   .qyc-panel-columns { grid-template-columns: 1fr; }
 }
 
+/* The week's spine, spanning both columns at the top of the panel: which week
+   and season it is, and under a rule, the three steps of a turn in the order
+   they are taken. It replaces a line of prose that named those steps without
+   being able to do any of them. */
+.qyc-turn-bar { border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+.qyc-turn-bar .qyc-season-row { padding-bottom: 8px; border-bottom: 1px solid var(--color-border-light-2, #555); }
+/* A grid rather than a flex row so the three steps are exactly equal thirds:
+   flexed, they each end up a different width as the arrows between them take
+   their share out of one side. */
+.qyc-turn-steps { display: grid; grid-template-columns: 1fr auto 1fr auto 1fr; align-items: center; gap: 6px; }
+.qyc-turn-steps > button { min-width: 0; }
+.qyc-turn-arrow { opacity: .5; font-size: .85em; }
+/* Three buttons with their labels spelled out need more room than two columns
+   of sections do, so the steps stack before the panel does. Stacked, an arrow
+   pointing right points at nothing. */
+@container qyc-panel (max-width: 560px) {
+  .qyc-turn-steps { grid-template-columns: 1fr; }
+  .qyc-turn-arrow { display: none; }
+}
+
 .qyc-muted { opacity: 0.68; font-size: 0.9em; }
 .qyc-game-over { font-weight: 800; letter-spacing: .05em; }
-.qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
-.qyc-turn-summary { margin: 7px 0; font-size: .92em; }
+/* The week on one end of the bar and the season on the other, at the same size:
+   they are the two halves of where the year has got to, and reading the season
+   as a tail on the week's own line made it the smaller fact of the two. Game
+   over, when there is one, lands between them. */
+.qyc-season-row { display: flex; justify-content: space-between; gap: 8px; align-items: center; flex-wrap: wrap; }
 .qyc-week { font-size: 1.1em; }
-.qyc-week-action { margin-top: 8px; display: flex; flex-direction: column; gap: 5px; }
-.qyc-action-buttons { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.qyc-action-taken { display: flex; flex-wrap: wrap; gap: 5px; }
-.qyc-action-chip { display: inline-flex; align-items: center; gap: 4px; padding: 1px 4px 1px 7px; border: 1px solid var(--color-border-light-2, #555); border-radius: 999px; font-size: .85em; }
-.qyc-chip-remove { width: 18px; min-width: 18px; height: 18px; padding: 0; line-height: 1; border: none; background: none; font-size: 1em; }
+/* The season carries the same ink as the quieted buttons in the lists below.
+   It is a statement rather than a control, but it belongs to the panel's
+   second tier and matching them is what says so. */
+.qyc-season { font-size: 1.1em; color: var(--button-text-color, #e7d1b1); opacity: .5; }
+.qyc-week-action { display: flex; flex-direction: column; gap: 5px; }
+/* One line per action, marked rather than boxed: the week's record is read,
+   not operated, so it wants no more furniture than a bullet. */
+.qyc-action-taken { display: flex; flex-direction: column; gap: 3px; }
+.qyc-action-line { margin: 0; }
+.qyc-action-line i { font-size: .55em; vertical-align: middle; opacity: .6; }
 .qyc-week-action .qyc-muted { margin: 0; }
 .qyc-history summary { cursor: pointer; font-weight: 700; }
 .qyc-history-list { margin-top: 7px; display: flex; flex-direction: column; gap: 4px; max-height: 220px; overflow-y: auto; }
 .qyc-history-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 7px; align-items: baseline; font-size: .9em; }
 .qyc-history-week { text-align: right; font-weight: 700; opacity: .7; }
-.qyc-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
-.qyc-undo { margin-top: 6px; }
 .qyc-current-card { min-height: 145px; }
+/* The card is named by rank and suit alone — the season it belongs to is on the
+   turn bar. Its name sits directly under the section heading and the two read as
+   one stack of headings, so this section's heading keeps more room under it than
+   the others do, and the name in turn stands off the card's own words. */
+.qyc-current-card h2 { margin-bottom: 14px; }
+.qyc-current-card h3 { margin-bottom: 12px; }
 .qyc-card-text hr { opacity: .4; }
 .qyc-projects { display: flex; flex-direction: column; gap: 5px; }
 /* The die column is a fixed width so the names line up whether or not the row
@@ -68,7 +111,9 @@
    get them read-only rather than disabled: an entry too long for its row can
    still be focused and scrolled through, and the title carries the whole of it
    either way. */
-input.qyc-inline-edit { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; }
+/* A size up on the panel's text: these names are what the surface is a list of,
+   and now that the controls beside them are quiet they can carry the weight. */
+input.qyc-inline-edit { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; font-size: 1.1em; }
 input.qyc-inline-edit:hover:not(:read-only) { border-color: var(--color-border-light-2, #555); }
 input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project.cancelled input.qyc-project-name { text-decoration: line-through; }
@@ -80,19 +125,46 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project-controls { display: flex; gap: 3px; align-items: center; justify-content: flex-end; }
 .qyc-project-controls .qyc-icon-button { flex: 0 0 28px; width: 28px; }
 .qyc-icon-button { min-width: 28px; padding: 3px; }
-.qyc-add-project { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 8px; }
+/* Every control in the lists — the row's own buttons, the steppers, the Adds —
+   sits beside the thing it acts on, and Foundry's default button is a filled,
+   bordered box that reads louder than the name it belongs to. Quiet them to
+   their icon and let hover and focus bring the frame back, so the eye lands on
+   the projects, resources and players first and on what can be done to them
+   second. A disabled one — a player's view of the GM's controls — goes quieter
+   still, since it is not offering anything. */
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  opacity: .5;
+}
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button):is(:hover, :focus-visible):not(:disabled) {
+  opacity: 1;
+  border-color: var(--color-border-light-2, #555);
+}
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button):disabled { opacity: .25; }
+/* Adding is one button at the head of each list, opposite its title: it appends
+   an empty row and the caret lands in it, so a list is added to in the same
+   field it is edited in. Every list is headed by one, so they are all the same
+   control, and the button does not move as the list grows. */
+.qyc-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.qyc-section-head h2 { margin: 0; }
+/* Both number fields hold a week count of one or two digits in a box wide
+   enough for four, so left-aligned they read as text someone typed rather than
+   as the value the stepper beside them is about to change. */
+.qyc-panel input[type="number"] { text-align: center; }
 .qyc-reduce-projects { display: grid; grid-template-columns: 1fr 60px 36px; gap: 5px; margin-top: 5px; align-items: center; }
 .qyc-reduce-projects .qyc-muted { text-align: right; }
-.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: start; }
+/* Abundances and Scarcities are two lists, not one table: the gap between them
+   has to be wider than the gap between a row and the row under it, or a name in
+   one column reads as belonging with the name beside it. */
+.qyc-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
 .qyc-resource-column { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
 .qyc-resource-row { display: grid; grid-template-columns: 1fr 28px; gap: 4px; align-items: center; }
-.qyc-resource-add { display: grid; grid-template-columns: 1fr 28px; gap: 4px; margin-top: 3px; }
 /* The trailing column holds the GM's remove button and collapses to nothing on
    a player's client, where the row is not editable. */
 .qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px auto; gap: 5px; align-items: center; margin-bottom: 5px; }
 .qyc-contempt-count { text-align: center; font-size: 1.2em; font-weight: 800; }
-.qyc-contempt .qyc-muted { margin: 0 0 8px; }
-.qyc-add-player { margin-top: 8px; }
 .qyc-footer { display: flex; flex-direction: column; gap: 6px; }
 .quiet-year-chat-card h2 { margin-bottom: 6px; }
 
@@ -100,7 +172,6 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
    column is too narrow to carry two of anything side by side. */
 @container qyc-column (max-width: 380px) {
   .qyc-columns { grid-template-columns: 1fr; }
-  .qyc-actions { grid-template-columns: 1fr; }
 }
 
 /* ------------------------------------------------------------------ */

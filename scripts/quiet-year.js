@@ -545,6 +545,11 @@ function freshState() {
     // One entry per week — the card drawn, and the actions taken against it.
     log: [],
     currentCard: null,
+    // The week whose project dice have been adjusted — step 2 of a turn, which
+    // leaves no other trace in the state. A number rather than a flag on the
+    // week so undoing a tick restores one scalar and cannot take the week's
+    // recorded actions down with it.
+    tickedWeek: 0,
     abundances: [],
     scarcities: [],
     projects: [],
@@ -613,6 +618,21 @@ const WEEK_ACTIONS = {
 function currentWeek(state) {
   const log = state.log || [];
   return log.length ? log[log.length - 1] : null;
+}
+
+// Weeks logged before an action could carry a note hold plain kind strings.
+// Normalize on read rather than migrating the setting, the same way
+// projectStatus() does — a year in progress keeps working either way.
+function weekActions(week) {
+  return (week?.actions || [])
+    .map(entry => (typeof entry === "string" ? { kind: entry, note: "" } : { kind: entry?.kind, note: entry?.note || "" }))
+    .filter(entry => WEEK_ACTIONS[entry.kind]);
+}
+
+// The label as it reads in a chip and in the year's log: the action, and what
+// was written down about it.
+function weekActionLabel({ kind, note }) {
+  return note ? `${WEEK_ACTIONS[kind]} — ${note}` : WEEK_ACTIONS[kind];
 }
 
 // A project is "active" until it either runs its die out (or is finished early)
@@ -705,12 +725,12 @@ async function migrateContemptIds() {
 const refreshPlaySurface = foundry.utils.debounce(() => {
   const app = window.QuietYearCobalt?.app;
   if (!app) return;
-  if (app.rendered) return void app.render(false);
-  // `rendered` is false for the whole duration of a render, so a change landing
-  // mid-render would otherwise be dropped and leave the surface stale until
-  // some unrelated change happened to fire. Record it instead; _render runs it
-  // once the in-flight render settles.
-  if (app._state === Application.RENDER_STATES.RENDERING) app._refreshPending = true;
+  // ApplicationV2 serializes renders through a semaphore, so a refresh landing
+  // mid-render queues behind the one in flight rather than being dropped — the
+  // V1 surface had to record that case and replay it itself. An unforced render
+  // is declined by a surface that has never been opened or has been closed, so
+  // this neither opens the window nor reopens one someone put away.
+  app.render(false).catch(err => console.error(`${MODULE_ID} |`, err));
 }, 100);
 
 function isKitDeck(stack) {
@@ -964,11 +984,13 @@ const drawWeek = serialized(async function drawWeek() {
   if (message?.id) await attachUndoMessage(message.id);
 
   if (state.gameOver) {
-    new Dialog({
-      title: "The Frost Shepherds Arrive",
+    // Deliberately not awaited: this runs inside the serialized write queue, so
+    // waiting on a human here would hold every other write open.
+    foundry.applications.api.DialogV2.prompt({
+      window: { title: "The Frost Shepherds Arrive" },
       content: "<p><strong>The game is over.</strong></p>",
-      buttons: { ok: { label: "So it ends." } }
-    }).render(true);
+      ok: { label: "So it ends." }
+    }).catch(err => console.error(`${MODULE_ID} |`, err));
   }
 });
 
@@ -1005,11 +1027,11 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
   if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
   const reduction = Math.max(1, Math.floor(Number(weeks) || 1));
   const state = getState();
+  const beforeFields = snapshotFields(state, ["tickedWeek"]);
   // Captured per project as the loop reaches it, just before it is changed.
   const before = [];
   const completed = [];
-  // A tick that found nothing to count down changed nothing, and an undo entry
-  // for it would push a real one off the end of the stack.
+  // Whether any die actually moved — only that is worth announcing.
   let touched = false;
   // Only active projects count down. A cancelled project still has weeks left
   // on its die and would otherwise tick its way to zero and announce itself
@@ -1025,8 +1047,14 @@ const tickProjects = serialized(async function tickProjects(weeks = 1) {
       }
     }
   }
+  // Step 2 of the turn is done for this week, whether or not there was anything
+  // left to count down. Deriving that from "no project has weeks on it" instead
+  // would un-take the step the moment the week's action started a project.
+  if (state.week) state.tickedWeek = state.week;
   await setState(state);
-  if (touched) await pushUndo(undoEntry(reduction > 1 ? `Reduce projects by ${reduction}` : "Tick Projects", {}, { projects: before }));
+  // A tick that reduced nothing still moved the week on a step, so it is worth
+  // an undo entry of its own — without one the turn could not be walked back.
+  await pushUndo(undoEntry(reduction > 1 ? `Reduce projects by ${reduction}` : "Tick Projects", beforeFields, { projects: before }));
   const message = await announceCompleted(completed);
   if (touched && message?.id) await attachUndoMessage(message.id);
 });
@@ -1068,11 +1096,9 @@ const renameProject = serialized(async function renameProject(id, name) {
   // sitting in the field and is no longer held as a draft. Without this the
   // surface would keep showing a name the world does not have until some
   // unrelated change happened to re-render it.
+  // Blank is allowed for the same reason it is on a resource row: the panel
+  // adds the project first and the name is typed into it afterwards.
   const trimmed = String(name).trim();
-  if (!trimmed) {
-    ui.notifications.warn("A project needs a name.");
-    return refreshPlaySurface();
-  }
   const state = getState();
   const project = (state.projects || []).find(p => p.id === id);
   if (!project) {
@@ -1113,7 +1139,7 @@ const setProjectStatus = serialized(async function setProjectStatus(id, status) 
 // on screen. Without it this would record against whatever the last log entry
 // happens to be when the queued task runs — and a draw can slip in ahead of it,
 // putting the action on the following week and burning that week's allowance.
-const recordAction = serialized(async function recordAction(kind, { week: number, silent = false } = {}) {
+const recordAction = serialized(async function recordAction(kind, { week: number, note = "", silent = false } = {}) {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
   if (!WEEK_ACTIONS[kind]) return;
   const state = getState();
@@ -1129,16 +1155,42 @@ const recordAction = serialized(async function recordAction(kind, { week: number
     if (!silent) ui.notifications.warn(`Week ${week.week} already has its actions recorded.`);
     return;
   }
-  week.actions.push(kind);
+  week.actions.push({ kind, note: String(note || "").trim() });
   await setState(state);
 });
 
-const undoAction = serialized(async function undoAction(index) {
+// Starting a project is one of the three things a week's action can be, so the
+// two ways in — the panel's add button and the Take Action dialog — go through
+// the same pair of writes rather than each assembling their own. The name is
+// kept as the action's note too, so the year's log says which project was
+// started rather than only that one was — the note records what was known when
+// the action was taken, so a row added nameless from the panel logs the plain
+// "Started a project" and naming it afterwards does not rewrite the year.
+function startProject(name, weeks, week, { silent = true } = {}) {
+  return queueTrackerWrite(async () => {
+    const state = getState();
+    state.projects.push({
+      id: foundry.utils.randomID(),
+      name,
+      weeks: Math.min(6, Math.max(1, Number(weeks) || 1)),
+      status: "active"
+    });
+    await setState(state);
+  }).then(() => recordAction("project", { week, note: name, silent }));
+}
+
+// Takes the week's most recent action off its record. Reached only from the
+// header menu, which hands a handler the <li> that was clicked rather than a
+// button carrying a payload, so it takes no index: the last one recorded is the
+// one anybody wants back. It does not touch a project the action started —
+// several cards call for a project as part of their own prompt, and taking the
+// action off is how the GM says this was one of those.
+const undoLastAction = serialized(async function undoLastAction() {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
   const state = getState();
   const week = currentWeek(state);
-  if (!week || !week.actions[index]) return refreshPlaySurface();
-  week.actions.splice(index, 1);
+  if (!week?.actions?.length) return refreshPlaySurface();
+  week.actions.pop();
   await setState(state);
 });
 
@@ -1168,26 +1220,23 @@ function resourceIndex(list, index, previous) {
   return nearest;
 }
 
-const addResource = serialized(async function addResource(kind, value) {
+// The default is the whole of the panel's add button: a row arrives empty and
+// is named in place, the way a project row is.
+const addResource = serialized(async function addResource(kind, value = "") {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
   if (!RESOURCE_LISTS[kind]) return;
-  const trimmed = String(value).trim();
-  if (!trimmed) return ui.notifications.warn(`Name the new ${RESOURCE_LISTS[kind]}.`);
   const state = getState();
-  state[kind] = [...(state[kind] || []), trimmed];
+  state[kind] = [...(state[kind] || []), String(value).trim()];
   await setState(state);
 });
 
 const renameResource = serialized(async function renameResource(kind, index, value, previous) {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the resource lists.");
   if (!RESOURCE_LISTS[kind]) return;
+  // Blank is allowed rather than refused: rows are added empty and named in
+  // place, so an empty field is one nobody has got to yet rather than a mistake
+  // to warn about. Blank is still not a removal — the trash button is.
   const trimmed = String(value).trim();
-  // Blank is not a removal — there is a button for that — so the field goes
-  // back to what the world holds, as a project rename does.
-  if (!trimmed) {
-    ui.notifications.warn(`${RESOURCE_LISTS[kind]} entries need a name.`);
-    return refreshPlaySurface();
-  }
   const state = getState();
   const list = state[kind] || [];
   const at = resourceIndex(list, index, previous);
@@ -1309,8 +1358,8 @@ async function removeContemptRow(id) {
 
 async function resetYear() {
   if (!game.user.isGM) return;
-  const confirmed = await Dialog.confirm({
-    title: "Reset Quiet Year?",
+  const confirmed = await foundry.applications.api.DialogV2.confirm({
+    window: { title: "Reset Quiet Year?" },
     content: "<p>This resets all four seasonal decks and clears the play-surface tracker. It does not erase the Cobalt Reach map or journals.</p>"
   });
   if (!confirmed) return;
@@ -1334,7 +1383,21 @@ async function resetYear() {
   });
 }
 
-class QuietYearPlaySurface extends Application {
+// Re-renders arrive at any moment, from any client, so anything the local user
+// has put into the DOM has to survive one. ApplicationV2 carries most of it:
+// HandlebarsApplicationMixin pre-syncs every part's state, replaces the parts,
+// then re-syncs — all synchronously, with nothing awaited between the capture
+// and the restore, which is the property the V1 version had to override
+// _replaceHTML by hand to get. Focus, the scroll positions a part names in
+// `scrollable` and the open state of any `details[data-sync]` come for free.
+//
+// What core does not carry is an uncommitted draft or a caret position: it
+// restores focus to a field whose value the incoming render has just
+// overwritten. Those two are added to the same _preSyncPartState/_syncPartState
+// pair below, so they stay inside that same synchronous window.
+class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicationMixin(
+  foundry.applications.api.ApplicationV2
+) {
   constructor(...args) {
     super(...args);
     // Names of fields the local user has typed into but not yet committed.
@@ -1345,60 +1408,139 @@ class QuietYearPlaySurface extends Application {
     // against this is how an uncommitted draft learns it has been overtaken.
     this._renderedValues = {};
     this._previousRenderedValues = {};
-    // Set when a refresh arrives while a render is already in flight.
-    this._refreshPending = false;
+    // A selector for the field to put the caret in once the render carrying it
+    // arrives — set when a button adds a row, since the row it adds is empty and
+    // the next thing anyone wants is to type its name.
+    this._pendingFocus = null;
   }
 
-  static get defaultOptions() {
-    return foundry.utils.mergeObject(super.defaultOptions, {
-      id: "quiet-year-cobalt-play-surface",
-      title: "The Quiet Year",
-      template: `modules/${MODULE_ID}/templates/play-surface.html`,
-      // Two columns of sections, so wide rather than tall: a 1fr 1fr split of
-      // 460px left neither side usable. The height stays where it was, which
-      // fits a laptop window — the surface floats free of the sidebar, so
-      // nothing else bounds it. Dragged narrower than the stylesheet's
-      // container breakpoint, the layout collapses back to one column.
-      width: 880,
-      height: 720,
-      resizable: true,
-      classes: ["quiet-year-cobalt", "play-surface"]
-    });
-  }
-
-  // Re-renders can now arrive at any moment from another client, so carry
-  // uncommitted text and the caret across them. This hooks _replaceHTML rather
-  // than _render because _render awaits getData and _renderInner before the
-  // swap: capturing there would snapshot the form, yield to the event loop, and
-  // then restore stale values over any keystroke typed in the gap. _replaceHTML
-  // runs synchronously around the swap, so nothing can be typed between the
-  // capture and the restore.
-  async _render(force, options) {
-    await super._render(force, options);
-    if (this._refreshPending) {
-      this._refreshPending = false;
-      refreshPlaySurface();
+  static DEFAULT_OPTIONS = {
+    id: "quiet-year-cobalt-play-surface",
+    classes: ["quiet-year-cobalt", "play-surface"],
+    window: { title: "The Quiet Year", resizable: true },
+    // Two columns of sections, so wide rather than tall: a 1fr 1fr split of
+    // 460px left neither side usable. The height stays where it was, which
+    // fits a laptop window — the surface floats free of the sidebar, so
+    // nothing else bounds it. Dragged narrower than the stylesheet's
+    // container breakpoint, the layout collapses back to one column.
+    position: { width: 880, height: 720 },
+    // Bound once, on the frame, and dispatched by [data-action] — so a render
+    // landing between the click and the write cannot detach the handler, and
+    // there is nothing to rebind per render. Anything that needs an event other
+    // than a click is wired in _onRender instead.
+    actions: {
+      draw: QuietYearPlaySurface.#onDraw,
+      tickProjects: QuietYearPlaySurface.#onTickProjects,
+      undo: QuietYearPlaySurface.#onUndo,
+      reset: QuietYearPlaySurface.#onReset,
+      takeAction: QuietYearPlaySurface.#onTakeAction,
+      undoAction: QuietYearPlaySurface.#onUndoAction,
+      addResource: QuietYearPlaySurface.#onAddResource,
+      removeResource: QuietYearPlaySurface.#onRemoveResource,
+      addProject: QuietYearPlaySurface.#onAddProject,
+      adjustProjectWeeks: QuietYearPlaySurface.#onAdjustProjectWeeks,
+      reduceProjects: QuietYearPlaySurface.#onReduceProjects,
+      finishProject: QuietYearPlaySurface.#onFinishProject,
+      cancelProject: QuietYearPlaySurface.#onCancelProject,
+      removeProject: QuietYearPlaySurface.#onRemoveProject,
+      addContempt: QuietYearPlaySurface.#onAddContempt,
+      adjustContempt: QuietYearPlaySurface.#onAdjustContempt,
+      removeContempt: QuietYearPlaySurface.#onRemoveContempt
     }
+  };
+
+  // Deliberately not a `root` part: a root part's children replace the content
+  // element's, which would drop the .qyc-panel wrapper the stylesheet's
+  // container queries hang off. As an ordinary part the wrapper is the element
+  // that gets replaced, and .window-content — the scroller — is left alone.
+  static PARTS = {
+    surface: {
+      template: `modules/${MODULE_ID}/templates/play-surface.html`,
+      // `details[data-sync]` covers the history being open; this covers how far
+      // into it someone had read.
+      scrollable: [".qyc-history-list"]
+    }
+  };
+
+  /* -------------------------------------------- */
+  /*  Header controls                             */
+  /* -------------------------------------------- */
+
+  // Undo and Reset Year live in the window header's control menu rather than in
+  // the panel. Both are GM-only and neither belongs to the weekly loop the panel
+  // is for — Undo is for a misclick and Reset Year ends the game — and a player
+  // gets no entry at all rather than a disabled control.
+  //
+  // The menu is rebuilt from this every time it is opened, which is what lets
+  // the Undo entry name what it will take back, so a misclick on it is as
+  // recoverable as the misclick that led here. It is absent rather than disabled
+  // when there is nothing to undo: a context menu has no disabled state.
+  //
+  // The actions map is shared with the panel's buttons, so these entries
+  // dispatch through the same handlers — but a menu entry passes the `<li>` that
+  // was clicked, not a button carrying a payload, so only handlers that ignore
+  // their second argument can be reached this way.
+  _getHeaderControls() {
+    const controls = super._getHeaderControls();
+    if (!game.user.isGM) return controls;
+    const lastUndone = undoStack().at(-1);
+    if (lastUndone) controls.push({ action: "undo", icon: "fas fa-clock-rotate-left", label: `Undo ${lastUndone.label}` });
+    // The week's record is read on the panel and edited here. Named by the kind
+    // alone rather than by weekActionLabel(): the note can be a sentence, and
+    // this is a menu entry.
+    const lastAction = weekActions(currentWeek(getState())).at(-1);
+    if (lastAction) controls.push({ action: "undoAction", icon: "fas fa-delete-left", label: `Undo ${WEEK_ACTIONS[lastAction.kind]}` });
+    controls.push({ action: "reset", icon: "fas fa-rotate-left", label: "Reset Year" });
+    return controls;
   }
 
-  _replaceHTML(element, html, options) {
-    const snapshot = this._captureFormState();
-    super._replaceHTML(element, html, options);
-    this._recordRenderedValues();
-    this._restoreFormState(snapshot);
+  /* -------------------------------------------- */
+  /*  Carrying local state across a render        */
+  /* -------------------------------------------- */
+
+  /** @inheritDoc */
+  _preSyncPartState(partId, newElement, priorElement, state) {
+    super._preSyncPartState(partId, newElement, priorElement, state);
+    // Core restores focus to the field but not what was in it: the incoming
+    // render's value is about to be written over whatever was being typed.
+    state.drafts = {};
+    for (const name of this._dirtyFields) {
+      const el = priorElement.querySelector(`[name="${name}"]`);
+      if (el) state.drafts[name] = el.value;
+    }
+    // Nor the caret, which a value write would send to the end of the field.
+    const focused = priorElement.querySelector(":focus");
+    try {
+      // Number inputs report no selection, and throw on access in some browsers.
+      if (typeof focused?.selectionStart === "number") {
+        state.caret = { start: focused.selectionStart, end: focused.selectionEnd };
+      }
+    } catch (_err) { /* caret position is a nicety, not a requirement */ }
   }
 
-  // The first render injects rather than replaces; seed the baseline there too,
-  // or the second render would read every field as newly changed.
-  _injectHTML(html, options) {
-    super._injectHTML(html, options);
-    this._recordRenderedValues();
+  /** @inheritDoc */
+  _syncPartState(partId, newElement, priorElement, state) {
+    // What world state says every field holds. Must be read before any draft is
+    // written back over it.
+    this._recordRenderedValues(newElement);
+    // Focus, the history's scroll position and its disclosure.
+    super._syncPartState(partId, newElement, priorElement, state);
+    this._restoreDrafts(newElement, state.drafts);
+    if (!state.caret) return;
+    const focused = newElement.querySelector(":focus");
+    try {
+      focused?.setSelectionRange(state.caret.start, state.caret.end);
+    } catch (_err) { /* see above */ }
   }
 
-  // What world state says every field holds. Must run before any draft is
-  // written back over it.
-  _recordRenderedValues() {
-    const root = this.element?.[0];
+  // The first render has no prior element, so neither sync hook runs for it.
+  // Seed the baseline here instead, or the second render reads every field as
+  // newly changed.
+  _onFirstRender(context, options) {
+    this._recordRenderedValues(this.element);
+  }
+
+  _recordRenderedValues(root) {
     if (!root) return;
     const rendered = {};
     for (const el of root.querySelectorAll("[name]")) rendered[el.name] = el.value;
@@ -1406,96 +1548,50 @@ class QuietYearPlaySurface extends Application {
     this._renderedValues = rendered;
   }
 
-  // A render arrives whenever anyone writes, so anything the local user has put
-  // into the DOM has to survive one. Drafts and the caret are handled below;
-  // this covers the history's disclosure state and how far they have scrolled
-  // into it, neither of which is a form field.
-  _captureDisclosure(root) {
-    return [...root.querySelectorAll("details")].map(el => ({
-      open: el.open,
-      scroll: el.querySelector(".qyc-history-list")?.scrollTop || 0
-    }));
-  }
-
-  _restoreDisclosure(root, snapshot) {
-    if (!snapshot) return;
-    [...root.querySelectorAll("details")].forEach((el, index) => {
-      const state = snapshot[index];
-      if (!state) return;
-      el.open = state.open;
-      const list = el.querySelector(".qyc-history-list");
-      if (list) list.scrollTop = state.scroll;
-    });
-  }
-
-  _captureFormState() {
-    const root = this.element?.[0];
-    if (!root) return null;
-    const values = {};
-    for (const name of this._dirtyFields) {
-      const el = root.querySelector(`[name="${name}"]`);
-      if (el) values[name] = el.value;
-    }
-    const disclosure = this._captureDisclosure(root);
-    const active = document.activeElement;
-    let focus = null;
-    if (active?.name && root.contains(active)) {
-      focus = { name: active.name, start: null, end: null };
-      // Number inputs throw on selection access in some browsers.
-      try {
-        focus.start = active.selectionStart;
-        focus.end = active.selectionEnd;
-      } catch (_err) { /* caret position is a nicety, not a requirement */ }
-    }
-    return { values, focus, disclosure };
-  }
-
-  _restoreFormState(snapshot) {
-    const root = this.element?.[0];
-    if (!snapshot || !root) return;
-    this._restoreDisclosure(root, snapshot.disclosure);
+  // An uncommitted draft wins over the incoming render — unless the
+  // authoritative value moved since the last render, meaning someone committed
+  // to this field or the year was reset. Their version wins then, and the local
+  // draft stops being treated as dirty so it cannot be restored again, or read
+  // back out of the DOM by the next save.
+  _restoreDrafts(root, drafts) {
     const rendered = this._renderedValues;
     const previous = this._previousRenderedValues;
-    for (const [name, value] of Object.entries(snapshot.values)) {
+    for (const [name, value] of Object.entries(drafts || {})) {
       const el = root.querySelector(`[name="${name}"]`);
       if (!el || el.disabled) continue;
-      // The authoritative value moved since the last render: someone committed
-      // to this field, or the year was reset. Their version wins, and the local
-      // draft stops being treated as dirty so it cannot be restored again — or
-      // read back out of the DOM by the next save.
       if (rendered[name] !== previous[name]) {
         this._dirtyFields.delete(name);
         continue;
       }
       el.value = value;
     }
-    if (!snapshot.focus) return;
-    const el = root.querySelector(`[name="${snapshot.focus.name}"]`);
-    if (!el || el.disabled) return;
-    // Swapping the HTML detaches the focused node, which parks focus on body.
-    // Anything else means focus is now somewhere the user put it — another app,
-    // Foundry's chat input — and pulling it back would send their keystrokes to
-    // the wrong field.
-    const active = document.activeElement;
-    if (active && active !== document.body && !root.contains(active)) return;
-    el.focus();
-    if (snapshot.focus.start === null) return;
-    try {
-      el.setSelectionRange(snapshot.focus.start, snapshot.focus.end);
-    } catch (_err) { /* see above */ }
   }
 
   _clearDirty(...names) {
     for (const name of names) this._dirtyFields.delete(name);
   }
 
-  getData() {
+  /* -------------------------------------------- */
+  /*  Rendering                                   */
+  /* -------------------------------------------- */
+
+  async _prepareContext(options) {
     const state = getState();
-    const undone = undoStack();
-    const lastUndone = undone[undone.length - 1];
     const seasonKey = state.season || "spring";
     const week = currentWeek(state);
     const allowance = week?.allowance || 1;
+    const actions = weekActions(week);
+
+    // The turn bar walks the week's three steps in order, so each button knows
+    // both whether its step is this week's next one and whether it has been
+    // taken. A step already done, or not yet reached, is disabled rather than
+    // hidden: the sequence stays legible, and a player sees the same shape.
+    const gm = game.user.isGM && !state.gameOver;
+    // Step 2 is taken, not inferred: a week with no project to count down still
+    // has to be walked past, because inferring it from "nothing left to tick"
+    // would un-take the step the moment the week's action started a project.
+    const tickDone = !!week && state.tickedWeek === state.week;
+    const actionsSpent = !!week && actions.length >= allowance;
     return {
       isGM: game.user.isGM,
       state,
@@ -1514,6 +1610,8 @@ class QuietYearPlaySurface extends Application {
       // Several cards branch on "if there are no projects underway", so the
       // notice has to key off the active ones, not off an empty list.
       hasActiveProjects: activeProjects(state).length > 0,
+      // See the resource placeholders below.
+      projectPlaceholder: game.user.isGM ? "Name this project" : "",
       contempt: (state.contempt || []).map((entry, index) => {
         const id = contemptId(entry, index);
         return { id, name: entry.name, count: Number(entry.count || 0), field: `contempt-${id}-name` };
@@ -1528,77 +1626,78 @@ class QuietYearPlaySurface extends Application {
       gameOver: !!state.gameOver,
       week: state.week || 0,
       hasWeek: !!state.week,
-      // Both the record of this week and what is still open on it.
-      weekActions: (week?.actions || []).map((kind, index) => ({ index, label: WEEK_ACTIONS[kind] })),
+      // What the week has on its record, read out rather than made removable:
+      // it is what happened, and the panel is not where it gets edited.
+      weekActions: actions.map(weekActionLabel),
       // Summer's King is the only card that grants two, so the count is worth
       // spelling out only when there is more than one to take.
-      allowanceLabel: allowance > 1 ? `${(week?.actions || []).length} of ${allowance} actions taken` : "",
-      canTakeAction: game.user.isGM && !!week && (week.actions || []).length < allowance,
+      allowanceLabel: allowance > 1 ? `${actions.length} of ${allowance} actions taken` : "",
+      // Step 1: only with the week before it finished, or before any week.
+      canDraw: gm && (!week || (tickDone && actionsSpent)),
+      // Step 2: once a card is on the table, until the dice have been adjusted.
+      canTick: gm && !!week && !tickDone,
+      // Step 3: after the dice, until the week's action allowance is spent.
+      canTakeAction: gm && !!week && tickDone && !actionsSpent,
       log: [...(state.log || [])].reverse().map(entry => ({
         week: entry.week,
         season: SEASON_LABELS[entry.season],
         card: entry.card,
-        actions: (entry.actions || []).map(kind => WEEK_ACTIONS[kind]).join(", ")
+        actions: weekActions(entry).map(weekActionLabel).join(", ")
       })),
       hasLog: !!(state.log || []).length,
-      canUndo: game.user.isGM && !!lastUndone,
-      // The button says what it will take back, so a misclick on it is as
-      // recoverable as the misclick that led here.
-      undoLabel: lastUndone ? `Undo ${lastUndone.label}` : "Nothing to undo",
-      actionChoices: Object.entries(WEEK_ACTIONS)
-        .filter(([kind]) => kind !== "project")
-        .map(([kind, label]) => ({ kind, label })),
       resources: Object.entries(RESOURCE_LISTS).map(([kind, label]) => ({
         kind,
         // The keys are already the plurals the columns are headed with.
         label: kind.charAt(0).toUpperCase() + kind.slice(1),
-        placeholder: `New ${label.toLowerCase()}`,
-        newField: `new-${kind}`,
+        // The empty row's own prompt, and the button that makes one. A player
+        // gets no prompt: their rows are read-only, and ghost text inviting them
+        // to name one would be an invitation to nothing.
+        placeholder: game.user.isGM ? `New ${label.toLowerCase()}` : "",
+        addLabel: `Add ${label}`,
         entries: (state[kind] || []).map((value, index) => ({ kind, value, index, field: `${kind}-${index}` }))
       }))
     };
   }
 
-  activateListeners(html) {
-    super.activateListeners(html);
-    const root = html[0] ?? html;
+  // Everything the actions map cannot express: the events are not clicks. Each
+  // render replaces the part element, taking these listeners with it, so they
+  // are bound again here every time.
+  _onRender(context, options) {
+    const root = this.element;
 
     root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
       if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
     });
 
-    root.querySelectorAll("[data-week-action]").forEach(el => el.addEventListener("click", ev => {
-      const button = ev.currentTarget;
-      recordAction(button.dataset.weekAction, { week: Number(button.dataset.week) }).catch(reportTrackerFailure);
-    }));
-
-    root.querySelectorAll("[data-week-action-undo]").forEach(el => el.addEventListener("click", ev => {
-      undoAction(Number(ev.currentTarget.dataset.weekActionUndo)).catch(reportTrackerFailure);
-    }));
-
-    root.querySelector('[data-action="draw"]')?.addEventListener("click", () => drawWeek().catch(reportTrackerFailure));
-    root.querySelector('[data-action="tick-projects"]')?.addEventListener("click", () => tickProjects().catch(reportTrackerFailure));
-    root.querySelector('[data-action="undo"]')?.addEventListener("click", () => undoLast().catch(reportTrackerFailure));
-    root.querySelector('[data-action="reset"]')?.addEventListener("click", () => resetYear().catch(reportTrackerFailure));
-
-    // The form is read here, synchronously, and only the state change is
-    // queued. `root` belongs to the render that bound this listener, and a
-    // render landing while the queue drains detaches it — a deferred read would
-    // then take its values from a dead node, including drafts _restoreFormState
-    // has already discarded in favour of someone else's committed value.
-    // Everything on this surface now commits as it is edited, so there is no
-    // save step left to get wrong: an in-place field writes when it loses
-    // focus or takes an Enter, and the add and remove buttons write outright.
+    // Everything on this surface commits as it is edited, so there is no save
+    // step left to get wrong: an in-place field writes when it loses focus or
+    // takes an Enter, and the add and remove buttons write outright.
     const commitField = (input, write) => {
+      // A render swaps the part out from under the focused field, and the browser
+      // fires blur on it on the way. That is not someone leaving the field, and
+      // committing on it is actively wrong: _renderedValues is still the baseline
+      // from before the render, so a draft that the incoming render disagrees with
+      // reads as an edit worth saving and gets written straight back over the
+      // value that render was carrying — another client's rename, undone by a
+      // keystroke nobody finished. Leave it alone: _preSyncPartState has the draft
+      // already and _restoreDrafts decides its fate against the new baseline a
+      // moment later, keeping it dirty if it survives.
+      //
+      // RENDERING is the test rather than the field being detached, because Chrome
+      // fires this blur while the element is still connected. It is only ever set
+      // between _renderHTML and the swap, which no human can blur into; closing the
+      // window tears the field out with the surface already CLOSING, so the commit
+      // people rely on when they type a name and shut the window still happens.
+      if (this.state === this.constructor.RENDER_STATES.RENDERING) return;
       if (input.value === this._renderedValues[input.name]) return this._clearDirty(input.name);
       this._clearDirty(input.name);
       write(input.value).catch(reportTrackerFailure);
     };
 
-    // Not the `change` event: _restoreFormState writes a surviving draft back
-    // with `el.value = …`, which resets what the element believes it held at
-    // the last change. A name typed before a render from another client and
-    // blurred after it would fire no change event at all and be lost.
+    // Not the `change` event: _restoreDrafts writes a surviving draft back with
+    // `el.value = …`, which resets what the element believes it held at the last
+    // change. A name typed before a render from another client and blurred after
+    // it would fire no change event at all and be lost.
     const commitOnBlur = (selector, write) => {
       root.querySelectorAll(selector).forEach(el => {
         el.addEventListener("blur", ev => commitField(ev.currentTarget, value => write(ev.currentTarget, value)));
@@ -1617,104 +1716,228 @@ class QuietYearPlaySurface extends Application {
       return renameResource(kind, Number(index), value, el.dataset.resourcePrevious);
     });
 
-    // Mousedown on the trash button blurs the row's field first, so an edit the
-    // GM never committed is already on its way through the queue by the time
-    // the removal runs — and both are serialized, so it lands first. Taking the
-    // guard value from the field as it stands now rather than from the render
-    // means the removal still finds the row it was pointed at.
-    root.querySelectorAll("[data-resource-remove]").forEach(el => el.addEventListener("click", ev => {
-      const button = ev.currentTarget;
-      const [kind, index] = button.dataset.resourceRemove.split(":");
-      const field = button.closest(".qyc-resource-row")?.querySelector("input");
-      const previous = field ? field.value.trim() : button.dataset.resourcePrevious;
-      removeResource(kind, Number(index), previous).catch(reportTrackerFailure);
-    }));
+    // The row an add button just made. Both lists append, so of the fields the
+    // selector matches it is the last one that is new. Consumed whichever render
+    // gets here first — a render this add did not cause is near enough the same
+    // moment, and leaving it armed would let it steal the caret later, in the
+    // middle of something else.
+    if (this._pendingFocus) {
+      const added = [...root.querySelectorAll(this._pendingFocus)].at(-1);
+      this._pendingFocus = null;
+      added?.focus();
+    }
+  }
 
-    // Every other field here commits on Enter, so the add boxes do too.
-    root.querySelectorAll("[data-add-on-enter]").forEach(el => el.addEventListener("keydown", ev => {
-      if (ev.key !== "Enter") return;
-      ev.preventDefault();
-      root.querySelector(ev.currentTarget.dataset.addOnEnter)?.click();
-    }));
+  /* -------------------------------------------- */
+  /*  Actions                                     */
+  /* -------------------------------------------- */
 
-    root.querySelectorAll("[data-resource-add]").forEach(el => el.addEventListener("click", ev => {
-      if (!game.user.isGM) return;
-      const kind = ev.currentTarget.dataset.resourceAdd;
-      const field = `new-${kind}`;
-      const input = root.querySelector(`[name="${field}"]`);
-      const value = input?.value ?? "";
-      this._clearDirty(field);
-      if (input) input.value = "";
-      addResource(kind, value).catch(reportTrackerFailure);
-    }));
+  /** @this {QuietYearPlaySurface} */
+  static #onDraw() {
+    drawWeek().catch(reportTrackerFailure);
+  }
 
-    // The form is read here, synchronously, and only the state change is
-    // queued: `root` belongs to this render, and a render landing while the
-    // queue drains detaches it.
-    root.querySelector('[data-action="add-project"]')?.addEventListener("click", ev => {
-      if (!game.user.isGM) return;
-      const name = root.querySelector('[name="new-project-name"]')?.value?.trim();
-      const weeks = Number(root.querySelector('[name="new-project-weeks"]')?.value || 1);
-      // The week as it was on screen when the button was pressed.
-      const week = Number(ev.currentTarget.dataset.week) || undefined;
-      if (!name) return ui.notifications.warn("Give the project a name.");
-      this._clearDirty("new-project-name", "new-project-weeks");
-      queueTrackerWrite(async () => {
-        const state = getState();
-        state.projects.push({ id: foundry.utils.randomID(), name, weeks: Math.min(6, Math.max(1, weeks)), status: "active" });
-        await setState(state);
-      })
-        // Silent: several cards call for a project as part of their own prompt
-        // rather than as the week's action, and the chip can be taken off again
-        // when this was one of those.
-        .then(() => recordAction("project", { week, silent: true }))
-        .catch(reportTrackerFailure);
+  /** @this {QuietYearPlaySurface} */
+  static #onTickProjects() {
+    tickProjects().catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onUndo() {
+    undoLast().catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onUndoAction() {
+    undoLastAction().catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onReset() {
+    resetYear().catch(reportTrackerFailure);
+  }
+
+  /**
+   * Step 3 of the week asks which of the three things the community did, and
+   * lets whatever was said about it be written down beside the choice. A
+   * project is startable from here too: choosing it makes the note the
+   * project's name and reveals its die, so the action and the project it
+   * created are one act rather than two the GM has to remember to pair.
+   *
+   * The week is read off the button that was on screen, before the dialog opens
+   * and before anything is awaited, rather than being resolved when the write
+   * runs: the queue can put a draw in front of the record, and "the current
+   * week" by then is the next one — which would record the action against the
+   * wrong week and spend that week's allowance. A dialog only widens the gap
+   * this is guarding.
+   * @this {QuietYearPlaySurface}
+   */
+  static async #onTakeAction(event, target) {
+    const week = Number(target.dataset.week);
+    const choices = Object.entries(WEEK_ACTIONS)
+      .map(([kind, label], index) => `<label class="qyc-choice"><input type="radio" name="kind" value="${kind}"${index === 0 ? " checked" : ""}> ${label}</label>`)
+      .join("");
+    const result = await foundry.applications.api.DialogV2.wait({
+      window: { title: "Take an Action" },
+      content: `<div class="quiet-year-cobalt-dialog qyc-action-form">
+        <p>What did the community do in week ${week}?</p>
+        <div class="qyc-choices">${choices}</div>
+        <label class="qyc-field"><span data-note-label>Note</span>
+          <input type="text" name="note" placeholder="What was discovered, decided, or said">
+        </label>
+        <label class="qyc-field" data-weeks-field hidden><span>Weeks on the die</span>
+          <input type="number" name="weeks" min="1" max="6" value="3">
+        </label>
+      </div>`,
+      render: (renderEvent, dialog) => {
+        const form = dialog.element.querySelector("form") || dialog.element;
+        const noteLabel = form.querySelector("[data-note-label]");
+        const weeksField = form.querySelector("[data-weeks-field]");
+        const note = form.elements.note;
+        const sync = () => {
+          const project = form.elements.kind.value === "project";
+          weeksField.hidden = !project;
+          noteLabel.textContent = project ? "Project name" : "Note";
+          note.placeholder = project ? "What are they building?" : "What was discovered, decided, or said";
+        };
+        form.addEventListener("change", sync);
+        sync();
+        // The default button carries `autofocus`, which lands after this runs —
+        // wait a frame so the field the GM actually wants to type in wins.
+        requestAnimationFrame(() => note.focus());
+      },
+      buttons: [
+        {
+          action: "record",
+          label: "Record",
+          default: true,
+          // The value this returns is what wait() resolves to.
+          callback: (submitEvent, button) => ({
+            kind: button.form.elements.kind.value,
+            note: button.form.elements.note.value.trim(),
+            weeks: Number(button.form.elements.weeks.value)
+          })
+        }
+      ]
     });
+    // Dismissing the window resolves to null rather than rejecting: rejectClose
+    // defaults to false. There is no cancel button — the window's own close
+    // control is the way out, and it lands here as that null.
+    if (!result) return;
 
-    root.querySelectorAll("[data-project-weeks]").forEach(el => el.addEventListener("click", ev => {
-      const [id, delta] = ev.currentTarget.dataset.projectWeeks.split(":");
-      adjustProjectWeeks(id, Number(delta)).catch(reportTrackerFailure);
-    }));
+    const { kind, note, weeks } = result;
+    if (kind !== "project") return recordAction(kind, { week, note }).catch(reportTrackerFailure);
+    // A project with no name would land on the tracker as a nameless die.
+    if (!note) return ui.notifications.warn("Give the project a name.");
+    startProject(note, weeks, week, { silent: false }).catch(reportTrackerFailure);
+  }
 
-    // Winter 6's "all remaining projects are reduced by 2 this week" — the
-    // weekly tick with a different number of weeks.
-    root.querySelector('[data-action="reduce-projects"]')?.addEventListener("click", () => {
+  /**
+   * Adds the row and puts the caret in it, rather than asking for the name in a
+   * box beside the button and adding a row once it is filled in. The row is the
+   * only place the entry is ever edited afterwards, so making it the place it is
+   * written in the first place leaves one field to learn instead of two, and one
+   * that saves the same way every time.
+   * @this {QuietYearPlaySurface}
+   */
+  static #onAddResource(event, target) {
+    if (!game.user.isGM) return;
+    const kind = target.dataset.kind;
+    this._pendingFocus = `[data-resource-edit^="${kind}:"]`;
+    // A write that never lands leaves no row to focus, and an armed selector
+    // would go off on some later render instead.
+    addResource(kind).catch(err => {
+      this._pendingFocus = null;
+      reportTrackerFailure(err);
+    });
+  }
+
+  /**
+   * Mousedown on the trash button blurs the row's field first, so an edit the GM
+   * never committed is already on its way through the queue by the time the
+   * removal runs — and both are serialized, so it lands first. Taking the guard
+   * value from the field as it stands now rather than from the render means the
+   * removal still finds the row it was pointed at.
+   * @this {QuietYearPlaySurface}
+   */
+  static #onRemoveResource(event, target) {
+    const field = target.closest(".qyc-resource-row")?.querySelector("input");
+    const previous = field ? field.value.trim() : target.dataset.previous;
+    removeResource(target.dataset.kind, Number(target.dataset.index), previous).catch(reportTrackerFailure);
+  }
+
+  /**
+   * As with a resource: the row appears first and is named in it. The die starts
+   * at three weeks — the middle of the one-to-six range, and the length most
+   * cards that call for a project ask for — and the row's own − and + are how it
+   * is changed, so the add button has nothing left to ask for.
+   * @this {QuietYearPlaySurface}
+   */
+  static #onAddProject(event, target) {
+    if (!game.user.isGM) return;
+    // The week as it was on screen when the button was pressed.
+    const week = Number(target.dataset.week) || undefined;
+    this._pendingFocus = "[data-project-rename]";
+    // Silent: several cards call for a project as part of their own prompt
+    // rather than as the week's action, and the chip can be taken off again
+    // when this was one of those.
+    startProject("", 3, week).catch(err => {
+      this._pendingFocus = null;
+      reportTrackerFailure(err);
+    });
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onAdjustProjectWeeks(event, target) {
+    adjustProjectWeeks(target.dataset.project, Number(target.dataset.delta)).catch(reportTrackerFailure);
+  }
+
+  /**
+   * Winter 6's "all remaining projects are reduced by 2 this week" — the weekly
+   * tick with a different number of weeks.
+   * @this {QuietYearPlaySurface}
+   */
+  static #onReduceProjects() {
+    if (!game.user.isGM) return;
+    const weeks = Number(this.element.querySelector('[name="reduce-weeks"]')?.value || 2);
+    this._clearDirty("reduce-weeks");
+    tickProjects(weeks).catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onFinishProject(event, target) {
+    setProjectStatus(target.dataset.project, "completed").catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onCancelProject(event, target) {
+    setProjectStatus(target.dataset.project, "cancelled").catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onRemoveProject(event, target) {
+    const id = target.dataset.project;
+    queueTrackerWrite(async () => {
       if (!game.user.isGM) return;
-      const weeks = Number(root.querySelector('[name="reduce-weeks"]')?.value || 2);
-      this._clearDirty("reduce-weeks");
-      tickProjects(weeks).catch(reportTrackerFailure);
-    });
+      const state = getState();
+      state.projects = state.projects.filter(p => p.id !== id);
+      await setState(state);
+    }).catch(reportTrackerFailure);
+  }
 
-    root.querySelectorAll('[data-project-finish]').forEach(el => el.addEventListener("click", ev => {
-      setProjectStatus(ev.currentTarget.dataset.projectFinish, "completed").catch(reportTrackerFailure);
-    }));
+  /** @this {QuietYearPlaySurface} */
+  static #onAddContempt() {
+    addContemptRow().catch(reportTrackerFailure);
+  }
 
-    root.querySelectorAll('[data-project-cancel]').forEach(el => el.addEventListener("click", ev => {
-      setProjectStatus(ev.currentTarget.dataset.projectCancel, "cancelled").catch(reportTrackerFailure);
-    }));
+  /** @this {QuietYearPlaySurface} */
+  static #onAdjustContempt(event, target) {
+    adjustContempt(target.dataset.contempt, Number(target.dataset.delta)).catch(reportTrackerFailure);
+  }
 
-    root.querySelectorAll('[data-project-remove]').forEach(el => el.addEventListener("click", ev => {
-      const id = ev.currentTarget.dataset.projectRemove;
-      queueTrackerWrite(async () => {
-        if (!game.user.isGM) return;
-        const state = getState();
-        state.projects = state.projects.filter(p => p.id !== id);
-        await setState(state);
-      }).catch(reportTrackerFailure);
-    }));
-
-    root.querySelector('[data-action="add-contempt"]')?.addEventListener("click", () => {
-      addContemptRow().catch(reportTrackerFailure);
-    });
-
-    root.querySelectorAll('[data-contempt]').forEach(el => el.addEventListener("click", ev => {
-      const [id, delta] = ev.currentTarget.dataset.contempt.split(":");
-      adjustContempt(id, Number(delta)).catch(reportTrackerFailure);
-    }));
-
-    root.querySelectorAll('[data-contempt-remove]').forEach(el => el.addEventListener("click", ev => {
-      removeContemptRow(ev.currentTarget.dataset.contemptRemove).catch(reportTrackerFailure);
-    }));
+  /** @this {QuietYearPlaySurface} */
+  static #onRemoveContempt(event, target) {
+    removeContemptRow(target.dataset.contempt).catch(reportTrackerFailure);
   }
 }
 
@@ -1731,8 +1954,7 @@ function openPlaySurface() {
 // icons and `CONFIG.ui` supplies the class instantiated for each one. There is
 // no DOM injection to do — but both records are read by `Game#initializeUI`,
 // which runs after `setup` and before `ready`, so registration has to happen at
-// `init`. Sidebar tabs are ApplicationV2; the play surface is still V1, and
-// nothing here requires porting it, since the tab only calls into it.
+// `init`.
 //
 // Everything is reached through the `foundry.*` namespace rather than
 // destructured into locals. This file is a classic script, so a top-level
@@ -1964,7 +2186,8 @@ async function installKit() {
     </ul>
     <p>You can disable the module after setup; the created world documents will remain.</p>
   </div>`;
-  new Dialog({ title: "Quiet Year — Cobalt Reach", content, buttons: { ok: { label: "Good" } } }).render(true);
+  foundry.applications.api.DialogV2.prompt({ window: { title: "Quiet Year — Cobalt Reach" }, content, ok: { label: "Good" } })
+    .catch(err => console.error(`${MODULE_ID} |`, err));
   return {decks, rules: rules.journal, setup: setup.journal, scene, macro, playMacro};
 }
 
@@ -2025,13 +2248,23 @@ Hooks.once("ready", async () => {
   await migrateContemptIds();
   if (game.settings.get(MODULE_ID, "installed")) return;
 
-  new Dialog({
-    title: "Install Quiet Year — Cobalt Reach?",
+  // Awaited rather than run from a button callback: a V1 callback neither
+  // awaited nor caught, so an install that threw before ensurePart() wrapped
+  // every step reached the GM as nothing at all. The promise DialogV2.wait
+  // returns puts the failure back on screen.
+  const choice = await foundry.applications.api.DialogV2.wait({
+    window: { title: "Install Quiet Year — Cobalt Reach?" },
     content: `<p>This module can add the four seasonal decks, reference journals, a blank Cobalt Reach drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter your world's actors, items, or system data.</p>`,
-    buttons: {
-      install: { label: "Install Kit", callback: () => installKit() },
-      later: { label: "Later" }
-    },
-    default: "install"
-  }).render(true);
+    buttons: [
+      { action: "install", label: "Install Kit", default: true },
+      { action: "later", label: "Later" }
+    ]
+  });
+  if (choice !== "install") return;
+  try {
+    await installKit();
+  } catch (err) {
+    console.error(`${MODULE_ID} |`, err);
+    ui.notifications.error("Quiet Year: the kit could not be installed — see the console.");
+  }
 });
