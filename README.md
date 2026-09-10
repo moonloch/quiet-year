@@ -96,6 +96,15 @@ This is an unofficial, AI-assisted personal-use helper. It is not affiliated wit
 
 ## Changelog
 
+### 0.5.0
+- The play surface and all four dialogs are ApplicationV2 / DialogV2, ahead of Foundry removing the V1 classes.
+- The week is a strip across the top of the panel — **Draw Card → Adjust Project Dice → Take Action** — with exactly one step live at a time, so the surface says where the week has got to.
+- Taking an action asks which of the three it was and lets you write down what was discovered, decided or said; choosing a project names it and starts its die in the same breath.
+- Every list is headed by an **Add** that appends an empty row and puts the caret in it, so a project, resource or player is added in the same field it is edited in.
+- The week's record reads as a line per action, and the header's `⋮` menu can take the last one back.
+- The lists' controls are quiet until you reach for them, and the names they belong to are a size up.
+- Fixed: a render from another client no longer lets a half-typed name overwrite the value that render was carrying — a rename made on one client could be undone by a keystroke nobody finished on another.
+
 ### 0.4.1
 - A `LICENSE` (MIT) covering the module's own code, and credit to Avery Alder and Buried Without Ceremony in the README, `module.json`, and both journals the kit installs.
 - The rules journal names the game and its publisher whether or not you supply `content/rules.html`: the kit appends its own credit line below your text, so a fully set-up world still credits the game.
