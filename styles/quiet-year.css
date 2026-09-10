@@ -79,6 +79,10 @@
 .qyc-history-row { display: grid; grid-template-columns: 28px 1fr auto; gap: 7px; align-items: baseline; font-size: .9em; }
 .qyc-history-week { text-align: right; font-weight: 700; opacity: .7; }
 .qyc-current-card { min-height: 145px; }
+/* The card's own title sits directly under the section heading and the two read
+   as one stack of headings, so this section's heading keeps more room under it
+   than the others do. */
+.qyc-current-card h2 { margin-bottom: 14px; }
 .qyc-card-text hr { opacity: .4; }
 .qyc-projects { display: flex; flex-direction: column; gap: 5px; }
 /* The die column is a fixed width so the names line up whether or not the row
@@ -109,6 +113,24 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project-controls { display: flex; gap: 3px; align-items: center; justify-content: flex-end; }
 .qyc-project-controls .qyc-icon-button { flex: 0 0 28px; width: 28px; }
 .qyc-icon-button { min-width: 28px; padding: 3px; }
+/* Every control in the lists — the row's own buttons, the steppers, the Adds —
+   sits beside the thing it acts on, and Foundry's default button is a filled,
+   bordered box that reads louder than the name it belongs to. Quiet them to
+   their icon and let hover and focus bring the frame back, so the eye lands on
+   the projects, resources and players first and on what can be done to them
+   second. A disabled one — a player's view of the GM's controls — goes quieter
+   still, since it is not offering anything. */
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button) {
+  background: none;
+  border-color: transparent;
+  box-shadow: none;
+  opacity: .5;
+}
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button):is(:hover, :focus-visible):not(:disabled) {
+  opacity: 1;
+  border-color: var(--color-border-light-2, #555);
+}
+.qyc-panel :is(.qyc-icon-button, .qyc-step-button, .qyc-contempt-row button, .qyc-add-row, .qyc-reduce-projects button):disabled { opacity: .25; }
 /* Adding is one button under each list: it appends an empty row and the caret
    lands in it, so a list is added to in the same field it is edited in. Every
    list ends with one, so they are all the same control. */
