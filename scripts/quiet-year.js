@@ -1361,6 +1361,41 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     // against this is how an uncommitted draft learns it has been overtaken.
     this._renderedValues = {};
     this._previousRenderedValues = {};
+    // Whether the Take Action menu is open. Kept on the instance rather than
+    // read off the DOM because every render rebuilds the markup closed, and a
+    // render arriving from another client must not shut a menu someone is
+    // reading. Reapplied in _onRender, the same way a draft is.
+    this._actionMenuOpen = false;
+    // Bound once so add/removeEventListener see the same reference. Anything
+    // outside the Take Action group — including the rest of the window — closes
+    // the menu; pointerdown rather than click so it settles before the button
+    // under the pointer acts on it.
+    this._onPointerDownOutsideMenu = ev => {
+      const el = ev.target instanceof Element ? ev.target : ev.target?.parentElement;
+      if (el?.closest(".qyc-take-action")) return;
+      this._setActionMenu(false);
+    };
+    this._onKeyDownWhileMenuOpen = ev => {
+      if (ev.key !== "Escape") return;
+      this._setActionMenu(false);
+      this.element?.querySelector("[data-action='toggleActionMenu']")?.focus();
+    };
+  }
+
+  /**
+   * Show or hide the Take Action menu, and keep the document-level listeners
+   * that dismiss it bound only while it is open. Called from the toggle, from
+   * recording an action, from every render (to reassert the remembered state
+   * over freshly rendered markup) and from close.
+   */
+  _setActionMenu(open) {
+    this._actionMenuOpen = open;
+    const menu = this.element?.querySelector(".qyc-action-menu");
+    if (menu) menu.hidden = !open;
+    this.element?.querySelector("[data-action='toggleActionMenu']")?.setAttribute("aria-expanded", String(open));
+    const method = open ? "addEventListener" : "removeEventListener";
+    document[method]("pointerdown", this._onPointerDownOutsideMenu, true);
+    document[method]("keydown", this._onKeyDownWhileMenuOpen, true);
   }
 
   static DEFAULT_OPTIONS = {
@@ -1382,6 +1417,7 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       tickProjects: QuietYearPlaySurface.#onTickProjects,
       undo: QuietYearPlaySurface.#onUndo,
       reset: QuietYearPlaySurface.#onReset,
+      toggleActionMenu: QuietYearPlaySurface.#onToggleActionMenu,
       recordAction: QuietYearPlaySurface.#onRecordAction,
       undoAction: QuietYearPlaySurface.#onUndoAction,
       addResource: QuietYearPlaySurface.#onAddResource,
@@ -1480,6 +1516,11 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   // The first render has no prior element, so neither sync hook runs for it.
   // Seed the baseline here instead, or the second render reads every field as
   // newly changed.
+  /** Leave nothing bound on the document behind a closed window. */
+  _onClose(options) {
+    this._setActionMenu(false);
+  }
+
   _onFirstRender(context, options) {
     this._recordRenderedValues(this.element);
   }
@@ -1589,6 +1630,10 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   _onRender(context, options) {
     const root = this.element;
 
+    // The template always renders the menu closed, so a render landing while it
+    // is open would shut it under whoever was reading it.
+    this._setActionMenu(this._actionMenuOpen);
+
     root.querySelectorAll("input[type='text'], input[type='number'], textarea").forEach(el => {
       if (el.name) el.addEventListener("input", () => this._dirtyFields.add(el.name));
     });
@@ -1680,7 +1725,13 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
    * @this {QuietYearPlaySurface}
    */
   static #onRecordAction(event, target) {
+    this._setActionMenu(false);
     recordAction(target.dataset.kind, { week: Number(target.dataset.week) }).catch(reportTrackerFailure);
+  }
+
+  /** @this {QuietYearPlaySurface} */
+  static #onToggleActionMenu() {
+    this._setActionMenu(!this._actionMenuOpen);
   }
 
   /** @this {QuietYearPlaySurface} */
