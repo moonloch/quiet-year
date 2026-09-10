@@ -81,8 +81,10 @@
 .qyc-current-card { min-height: 145px; }
 /* The card's own title sits directly under the section heading and the two read
    as one stack of headings, so this section's heading keeps more room under it
-   than the others do. */
+   than the others do — and the card's title in turn stands off its text, which
+   is the card's own words rather than more of the surface's furniture. */
 .qyc-current-card h2 { margin-bottom: 14px; }
+.qyc-current-card h3 { margin-bottom: 12px; }
 .qyc-card-text hr { opacity: .4; }
 .qyc-projects { display: flex; flex-direction: column; gap: 5px; }
 /* The die column is a fixed width so the names line up whether or not the row
