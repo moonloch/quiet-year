@@ -101,7 +101,9 @@
    get them read-only rather than disabled: an entry too long for its row can
    still be focused and scrolled through, and the title carries the whole of it
    either way. */
-input.qyc-inline-edit { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; }
+/* A size up on the panel's text: these names are what the surface is a list of,
+   and now that the controls beside them are quiet they can carry the weight. */
+input.qyc-inline-edit { background: none; border: 1px solid transparent; border-radius: 4px; padding: 1px 3px; height: auto; min-width: 0; box-shadow: none; text-overflow: ellipsis; font-size: 1.1em; }
 input.qyc-inline-edit:hover:not(:read-only) { border-color: var(--color-border-light-2, #555); }
 input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
 .qyc-project.cancelled input.qyc-project-name { text-decoration: line-through; }
