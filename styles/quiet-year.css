@@ -154,7 +154,6 @@ input.qyc-inline-edit:read-only { color: inherit; opacity: 1; cursor: default; }
    a player's client, where the row is not editable. */
 .qyc-contempt-row { display: grid; grid-template-columns: 1fr 34px 36px 34px auto; gap: 5px; align-items: center; margin-bottom: 5px; }
 .qyc-contempt-count { text-align: center; font-size: 1.2em; font-weight: 800; }
-.qyc-contempt .qyc-muted { margin: 0 0 8px; }
 .qyc-footer { display: flex; flex-direction: column; gap: 6px; }
 .quiet-year-chat-card h2 { margin-bottom: 6px; }
 
