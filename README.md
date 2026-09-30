@@ -58,7 +58,7 @@ A malformed deck file is reported against the file rather than quietly producing
 Open it from the **Q** tab in the sidebar, or with the **Quiet Year: Open Play Surface** macro. It is a floating window that every connected client sees, kept in step live — a GM's change appears on the players' screens without a reload. It tracks:
 
 - **The week.** A counter, the season, how many cards remain in it, and the turn order reminder (play a card → adjust project dice → take an action). **Draw Week** draws at random from the season's undrawn cards and shows the card's full text.
-- **The week's action.** One of *discovered something new*, *held a discussion* or *started a project*, recorded against that week — Summer's King allows two. Starting a project records itself. An action recorded by mistake can be taken back.
+- **The week's action.** One of *discovered something new*, *held a discussion* or *started a project*, recorded against that week from **Take Action** — Summer's King allows two. Adding a project from the Projects list does not count as the week's action, since many cards call for a project of their own. An action recorded by mistake can be taken back.
 - **Projects.** Each carries its countdown die. **Tick Projects** advances every active one by a week; individual projects can be nudged up or down, renamed in place, finished early, failed, or deleted. A failed project stays on the surface, struck through and holding the weeks it had left, as the record of where it stood. There is also a control to reduce every project by a fixed number of weeks, for the cards that call for it.
 - **Abundances and Scarcities**, as two editable lists — add, rename in place, remove.
 - **Contempt**, a row per player with a running count. Players work the rows themselves rather than asking the GM to click for them: the ± buttons are enabled for everyone, and a player's click is relayed to a GM client. Any player can adjust any row — it is a shared, table-facing signal, not a permission boundary. The GM adds, renames and removes rows.
@@ -95,6 +95,10 @@ The module's own code and documentation — the installer, the decks and journal
 This is an unofficial, AI-assisted personal-use helper. It is not affiliated with, endorsed by, or connected to Avery Alder or Buried Without Ceremony.
 
 ## Changelog
+
+### 0.5.1
+- Fixed: **Add Project** on the panel no longer spends the week's action. Many cards call for a project as part of their own prompt, and adding one for the card left **Take Action** dark once the dice were adjusted, with no sign why. Only Take Action records the week's action now.
+- The week's record sits in the turn bar, under the three steps, so when Take Action is dark because the action is taken, what it was is right beneath it.
 
 ### 0.5.0
 - The play surface and all four dialogs are ApplicationV2 / DialogV2, ahead of Foundry removing the V1 classes.
