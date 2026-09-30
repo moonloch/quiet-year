@@ -92,6 +92,12 @@ This is an unofficial, AI-assisted personal-use helper. It is not affiliated wit
 
 ## Changelog
 
+### 0.6.0
+- The kit is no longer tied to a setting. The module is **Quiet Year Kit**, and a new install creates **Quiet Year — Map** and **Quiet Year — Setup**.
+- The setup workbook is setting-neutral: starting resources, the names worth remembering, and the looming end.
+- Macros and scripts reach the kit through `window.QuietYear`. A world's existing macros are rewritten to it when the GM loads the world.
+- A world already running the kit keeps its year: the tracker, the decks, the drawn map, and anything written in the workbook. Its scene and journals keep the names they already have.
+
 ### 0.5.1
 - Fixed: **Add Project** on the panel no longer spends the week's action. Many cards call for a project as part of their own prompt, and adding one for the card left **Take Action** dark once the dice were adjusted, with no sign why. Only Take Action records the week's action now.
 - The week's record sits in the turn bar, under the three steps, so when Take Action is dark because the action is taken, what it was is right beneath it.
