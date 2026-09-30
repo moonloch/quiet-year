@@ -1,4 +1,4 @@
-.quiet-year-cobalt-dialog .notes { opacity: 0.9; }
+.quiet-year-dialog .notes { opacity: 0.9; }
 /* The Take Action form: three choices, a note, and the project die that only
    the third one needs. Stacked in one column so the note reads as belonging to
    whichever choice is selected above it. */
@@ -10,9 +10,9 @@
 .qyc-choice { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 .qyc-choice input { flex: 0 0 auto; margin: 0; }
 .qyc-field { display: grid; grid-template-columns: 110px 1fr; align-items: center; gap: 8px; }
-.quiet-year-cobalt-dialog code { user-select: all; }
+.quiet-year-dialog code { user-select: all; }
 
-.quiet-year-cobalt .window-content { padding: 0; overflow: auto; }
+.quiet-year-app .window-content { padding: 0; overflow: auto; }
 .qyc-panel { padding: 12px; display: flex; flex-direction: column; gap: 10px; container-type: inline-size; container-name: qyc-panel; }
 .qyc-panel section { border: 1px solid var(--color-border-light-2, #555); border-radius: 6px; padding: 10px; }
 .qyc-panel h2 { margin: 0 0 8px; font-size: 1.15rem; }

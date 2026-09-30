@@ -94,6 +94,6 @@ for a season already installed, delete that deck and run the repair.
 
 ## What stays in the repository
 
-The *Cobalt Reach — Quiet Year Setup* journal is original writing about reading
-the map at sector scale for this campaign, not reproduced game text, so it
-lives in the module source rather than here.
+The *Quiet Year — Setup* journal is original writing — a workbook for the
+table's starting resources and the names worth remembering — not reproduced
+game text, so it lives in the module source rather than here.
