@@ -12,23 +12,20 @@
       <i class="fas fa-arrow-right qyc-turn-arrow" aria-hidden="true"></i>
       <button type="button" data-action="takeAction" data-week="{{week}}" {{#unless canTakeAction}}disabled{{/unless}}><i class="fas fa-list-check"></i> Take Action</button>
     </div>
+    {{#if weekActions}}
+    <div class="qyc-week-action">
+      <div class="qyc-action-taken">
+        {{#each weekActions}}
+          <p class="qyc-action-line"><i class="fas fa-diamond" aria-hidden="true"></i> {{this}}</p>
+        {{/each}}
+      </div>
+      {{#if allowanceLabel}}<p class="qyc-muted">{{allowanceLabel}}</p>{{/if}}
+    </div>
+    {{/if}}
   </header>
 
   <div class="qyc-panel-columns">
     <div class="qyc-panel-column">
-      {{#if weekActions}}
-      <section class="qyc-turn">
-        <div class="qyc-week-action">
-          <div class="qyc-action-taken">
-            {{#each weekActions}}
-              <p class="qyc-action-line"><i class="fas fa-diamond" aria-hidden="true"></i> {{this}}</p>
-            {{/each}}
-          </div>
-          {{#if allowanceLabel}}<p class="qyc-muted">{{allowanceLabel}}</p>{{/if}}
-        </div>
-      </section>
-      {{/if}}
-
       <section class="qyc-current-card">
         <h2>Current Card</h2>
         {{#if hasCurrentCard}}
@@ -66,7 +63,7 @@
       <section>
         <div class="qyc-section-head">
           <h2>Projects</h2>
-          {{#if isGM}}<button type="button" class="qyc-add-row" data-action="addProject" data-week="{{week}}"><i class="fas fa-plus"></i> Add Project</button>{{/if}}
+          {{#if isGM}}<button type="button" class="qyc-add-row" data-action="addProject"><i class="fas fa-plus"></i> Add Project</button>{{/if}}
         </div>
         <div class="qyc-projects">
           {{#each projects}}

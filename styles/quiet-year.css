@@ -75,7 +75,10 @@
    It is a statement rather than a control, but it belongs to the panel's
    second tier and matching them is what says so. */
 .qyc-season { font-size: 1.1em; color: var(--button-text-color, #e7d1b1); opacity: .5; }
-.qyc-week-action { display: flex; flex-direction: column; gap: 5px; }
+/* The week's record sits under the steps, below a rule like the one above
+   them: it is what step 3 did, and it is the bar's answer when Take Action is
+   dark because the week's action has already been taken. */
+.qyc-week-action { display: flex; flex-direction: column; gap: 5px; padding-top: 8px; border-top: 1px solid var(--color-border-light-2, #555); }
 /* One line per action, marked rather than boxed: the week's record is read,
    not operated, so it wants no more furniture than a bullet. */
 .qyc-action-taken { display: flex; flex-direction: column; gap: 3px; }
