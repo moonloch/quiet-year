@@ -606,9 +606,7 @@ function reportTrackerFailure(err) {
   ui.notifications.error("The Quiet Year tracker could not be updated — see the console.");
 }
 
-// A week ends in one action of three. Starting a project is the only one that
-// already had any UI, so it is recorded from the Add Project flow rather than
-// asked for twice.
+// A week ends in one action of three, recorded from the turn bar's Take Action.
 const WEEK_ACTIONS = {
   discover: "Discovered something new",
   discussion: "Held a discussion",
@@ -1159,32 +1157,36 @@ const recordAction = serialized(async function recordAction(kind, { week: number
   await setState(state);
 });
 
-// Starting a project is one of the three things a week's action can be, so the
-// two ways in — the panel's add button and the Take Action dialog — go through
-// the same pair of writes rather than each assembling their own. The name is
-// kept as the action's note too, so the year's log says which project was
-// started rather than only that one was — the note records what was known when
-// the action was taken, so a row added nameless from the panel logs the plain
-// "Started a project" and naming it afterwards does not rewrite the year.
-function startProject(name, weeks, week, { silent = true } = {}) {
-  return queueTrackerWrite(async () => {
-    const state = getState();
-    state.projects.push({
-      id: foundry.utils.randomID(),
-      name,
-      weeks: Math.min(6, Math.max(1, Number(weeks) || 1)),
-      status: "active"
-    });
-    await setState(state);
-  }).then(() => recordAction("project", { week, note: name, silent }));
+// Puts a project on the tracker and nothing more. The panel's Add Project
+// comes here: many cards call for a project as part of their own prompt, and a
+// row added for one of those used to spend the week's action with it, leaving
+// Take Action dark once the dice were adjusted and no word on the bar as to why.
+const addProject = serialized(async function addProject(name, weeks) {
+  if (!game.user.isGM) return ui.notifications.warn("The GM controls the project tracker.");
+  const state = getState();
+  state.projects.push({
+    id: foundry.utils.randomID(),
+    name,
+    weeks: Math.min(6, Math.max(1, Number(weeks) || 1)),
+    status: "active"
+  });
+  await setState(state);
+});
+
+// Starting a project as the week's action — Take Action's third choice. The
+// name is kept as the action's note too, so the year's log says which project
+// was started rather than only that one was, and renaming the project later
+// does not rewrite the year. Chained rather than nested: both halves take their
+// own turn in the queue.
+function startProject(name, weeks, week) {
+  return addProject(name, weeks).then(() => recordAction("project", { week, note: name }));
 }
 
 // Takes the week's most recent action off its record. Reached only from the
 // header menu, which hands a handler the <li> that was clicked rather than a
 // button carrying a payload, so it takes no index: the last one recorded is the
-// one anybody wants back. It does not touch a project the action started —
-// several cards call for a project as part of their own prompt, and taking the
-// action off is how the GM says this was one of those.
+// one anybody wants back. It does not touch a project the action started: the
+// record was wrong, not necessarily the project.
 const undoLastAction = serialized(async function undoLastAction() {
   if (!game.user.isGM) return ui.notifications.warn("The GM keeps the week's record.");
   const state = getState();
@@ -1829,7 +1831,7 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
     if (kind !== "project") return recordAction(kind, { week, note }).catch(reportTrackerFailure);
     // A project with no name would land on the tracker as a nameless die.
     if (!note) return ui.notifications.warn("Give the project a name.");
-    startProject(note, weeks, week, { silent: false }).catch(reportTrackerFailure);
+    startProject(note, weeks, week).catch(reportTrackerFailure);
   }
 
   /**
@@ -1873,15 +1875,11 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
    * is changed, so the add button has nothing left to ask for.
    * @this {QuietYearPlaySurface}
    */
-  static #onAddProject(event, target) {
+  static #onAddProject() {
     if (!game.user.isGM) return;
-    // The week as it was on screen when the button was pressed.
-    const week = Number(target.dataset.week) || undefined;
     this._pendingFocus = "[data-project-rename]";
-    // Silent: several cards call for a project as part of their own prompt
-    // rather than as the week's action, and the chip can be taken off again
-    // when this was one of those.
-    startProject("", 3, week).catch(err => {
+    // Only a row, never the week's action: that is Take Action's to record.
+    addProject("", 3).catch(err => {
       this._pendingFocus = null;
       reportTrackerFailure(err);
     });
