@@ -258,7 +258,8 @@ const SHIPPED_FINGERPRINTS = {
     "uiyu9i",  // the original text, which opened with an <h1> of its own
     "13nbb4i", // the summary as the module last shipped it, before the text moved to content/
     "1d1dnsj", // RULES_PLACEHOLDER — the stand-in written when there is no content/rules.html
-    "1bxr24l"  // the same stand-in, once it credited Alder and Buried Without Ceremony
+    "1bxr24l", // the same stand-in, once it credited Alder and Buried Without Ceremony
+    "sn1wvp"   // the same stand-in, once the workbook was no longer set in a named sector
   ],
   // The workbook is rewritten only where it still holds one of these, which is
   // what tells a page nobody has touched from one the table has filled in — so
@@ -267,7 +268,8 @@ const SHIPPED_FINGERPRINTS = {
   setup: [
     "vo70dq",
     "1qebae1",
-    "1evc46j" // the workbook, once it carried the same credit
+    "1evc46j", // the workbook, once it carried the same credit
+    "1vm0ux1"  // the setting-neutral workbook: starting resources, names, the looming end
   ]
 };
 
@@ -485,11 +487,15 @@ async function ensureJournal(name, pageName, key, html, { reconcile = false, cre
 // game — so a repair run that restored dimensions, grid or padding would move
 // or clip a year's worth of the table's drawings. There is nothing here worth
 // reconciling against that risk.
+//
+// Found by `createdByKit` rather than by its key: the key has been renamed
+// once, and the kit only ever makes the one scene, so the flag every version
+// has stamped is what finds the map a table has already drawn on.
 async function ensureScene() {
-  let scene = game.scenes.find(s => s.getFlag(MODULE_ID, "key") === "cobalt-scene");
+  let scene = game.scenes.find(s => s.getFlag(MODULE_ID, "createdByKit"));
   if (scene) return scene;
   return Scene.create({
-    name: "Quiet Year — Cobalt Reach",
+    name: "Quiet Year — Map",
     width: 4000,
     height: 3000,
     padding: 0.05,
@@ -498,7 +504,7 @@ async function ensureScene() {
     tokenVision: false,
     fogExploration: false,
     navigation: true,
-    flags: { [MODULE_ID]: { key: "cobalt-scene", createdByKit: true } }
+    flags: { [MODULE_ID]: { key: "scene", createdByKit: true } }
   });
 }
 
@@ -506,11 +512,11 @@ async function ensureMacro(key = "installer") {
   const configs = {
     installer: {
       name: "Quiet Year: Install / Repair Kit",
-      command: "await window.QuietYearCobalt.installKit();"
+      command: "await window.QuietYear.installKit();"
     },
     play: {
       name: "Quiet Year: Open Play Surface",
-      command: "window.QuietYearCobalt.openPlaySurface();"
+      command: "window.QuietYear.openPlaySurface();"
     }
   };
   const cfg = configs[key];
@@ -710,6 +716,17 @@ async function migrateWeekNumber() {
   await setState(state);
 }
 
+// The public surface was renamed, and both macros call into it — the repair one
+// included, so a world whose macros still held the old name would have no way
+// left to repair them. Only macros already there are brought forward; creating
+// a missing one is the installer's call, not a page load's.
+async function migrateMacroCommands() {
+  for (const key of ["installer", "play"]) {
+    if (!game.macros.some(m => m.getFlag(MODULE_ID, "key") === key)) continue;
+    await ensurePart(`${key === "play" ? "play surface" : "Install / Repair"} macro`, () => ensureMacro(key));
+  }
+}
+
 async function migrateContemptIds() {
   const state = getState();
   if (!(state.contempt || []).some(entry => !entry.id)) return;
@@ -721,7 +738,7 @@ async function migrateContemptIds() {
 // goes through this one debounced helper, so a single draw (a setting write
 // plus one to three card updates) costs one render on every client.
 const refreshPlaySurface = foundry.utils.debounce(() => {
-  const app = window.QuietYearCobalt?.app;
+  const app = window.QuietYear?.app;
   if (!app) return;
   // ApplicationV2 serializes renders through a semaphore, so a refresh landing
   // mid-render queues behind the one in flight rather than being dropped — the
@@ -1362,7 +1379,7 @@ async function resetYear() {
   if (!game.user.isGM) return;
   const confirmed = await foundry.applications.api.DialogV2.confirm({
     window: { title: "Reset Quiet Year?" },
-    content: "<p>This resets all four seasonal decks and clears the play-surface tracker. It does not erase the Cobalt Reach map or journals.</p>"
+    content: "<p>This resets all four seasonal decks and clears the play-surface tracker. It does not erase the map or journals.</p>"
   });
   if (!confirmed) return;
   // The confirm deliberately sits outside the queue — waiting on a human there
@@ -1417,8 +1434,8 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
   }
 
   static DEFAULT_OPTIONS = {
-    id: "quiet-year-cobalt-play-surface",
-    classes: ["quiet-year-cobalt", "play-surface"],
+    id: "quiet-year-play-surface",
+    classes: ["quiet-year-app", "play-surface"],
     window: { title: "The Quiet Year", resizable: true },
     // Two columns of sections, so wide rather than tall: a 1fr 1fr split of
     // 460px left neither side usable. The height stays where it was, which
@@ -1781,7 +1798,7 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
       .join("");
     const result = await foundry.applications.api.DialogV2.wait({
       window: { title: "Take an Action" },
-      content: `<div class="quiet-year-cobalt-dialog qyc-action-form">
+      content: `<div class="quiet-year-dialog qyc-action-form">
         <p>What did the community do in week ${week}?</p>
         <div class="qyc-choices">${choices}</div>
         <label class="qyc-field"><span data-note-label>Note</span>
@@ -1940,8 +1957,8 @@ class QuietYearPlaySurface extends foundry.applications.api.HandlebarsApplicatio
 }
 
 function openPlaySurface() {
-  if (!window.QuietYearCobalt.app) window.QuietYearCobalt.app = new QuietYearPlaySurface();
-  window.QuietYearCobalt.app.render(true);
+  if (!window.QuietYear.app) window.QuietYear.app = new QuietYearPlaySurface();
+  window.QuietYear.app.render(true);
 }
 
 // The two macros are easy to lose track of on a hotbar page, and there was no
@@ -2042,7 +2059,7 @@ const CREDIT_HTML = `<hr>
 const RULES_PLACEHOLDER = `
 <p><strong>This journal is waiting for its text.</strong></p>
 <p>The Quiet Year's turn structure and action summary are not shipped with this module. To fill this page in, create <code>content/rules.html</code> inside the module folder and write the summary there from your own copy of the game, then run <strong>Quiet Year: Install / Repair Kit</strong> again.</p>
-<p>The format is described in <code>content/README.md</code>. Everything else the kit installs — the decks, the play surface, the sector setup workbook — works without it.</p>
+<p>The format is described in <code>content/README.md</code>. Everything else the kit installs — the decks, the play surface, the setup workbook — works without it.</p>
 ${CREDIT_HTML}`;
 
 // An unreadable rules.html is treated as absent, which is safe: the stand-in is
@@ -2054,21 +2071,11 @@ async function rulesText() {
 }
 
 const setupHtml = `
-<p>This kit keeps the published card prompts intact and changes only the camera scale: the shared map represents <strong>Cobalt Reach as a sector</strong>.</p>
-<h2>Suggested interpretation</h2>
-<ul>
-<li><strong>Terrain features</strong> → systems, nebulae, wreck fields, anomalous regions, hazardous routes, dead zones.</li>
-<li><strong>The community</strong> → the inhabited Reach as a loose network of settlements and stations.</li>
-<li><strong>Nearby communities</strong> → worlds, stations, enclaves, factions, fleets, cultures.</li>
-<li><strong>Roads / paths</strong> → known travel corridors, passage routes, or reliable navigation lanes.</li>
-<li><strong>Projects</strong> → sector-scale developments whose countdown measures narrative time/attention rather than literal construction time.</li>
-</ul>
 <h2>Starting resources</h2>
-<p>RAW: each player names one important resource; choose one resource total as an Abundance and treat the others as Scarcities.</p>
-<p><strong>Optional two-player sector tweak:</strong> each player names two strategically important resources. Choose one total as an Abundance; the other three begin as Scarcities.</p>
+<p>Each player names one important resource. Choose one of them as an Abundance; the others begin as Scarcities.</p>
 <table><thead><tr><th>Abundances</th><th>Scarcities</th></tr></thead><tbody><tr><td><br><br><br></td><td><br><br><br></td></tr></tbody></table>
 <h2>Names / factions / places worth remembering</h2><p><br><br><br><br></p>
-<h2>Looming end</h2><p>You can leave the Frost Shepherds mysterious or rename them later. Avoid defining exactly what their arrival means before play; the ambiguity is useful campaign fuel.</p>
+<h2>Looming end</h2><p>You can leave the Frost Shepherds mysterious or rename them later. Avoid defining exactly what their arrival means before play; the ambiguity is useful fuel.</p>
 ${CREDIT_HTML}`;
 
 // Every step of the install writes to documents, and most of them to documents
@@ -2144,8 +2151,8 @@ async function installKit() {
   }
   const rules = await ensureJournalPart("rules", "Quiet Year — Rules & Turn Summary", "Table Reference", "rules",
     wantedRules ? `${wantedRules}\n${CREDIT_HTML}` : RULES_PLACEHOLDER, { reconcile: true, createOnly: !wantedRules });
-  const setup = await ensureJournalPart("setup", "Cobalt Reach — Quiet Year Setup", "Sector Setup", "setup", setupHtml);
-  const scene = await ensurePart("Cobalt Reach scene", () => ensureScene());
+  const setup = await ensureJournalPart("setup", "Quiet Year — Setup", "Table Setup", "setup", setupHtml);
+  const scene = await ensurePart("map scene", () => ensureScene());
   const macro = await ensurePart("Install / Repair macro", () => ensureMacro("installer"));
   const playMacro = await ensurePart("play surface macro", () => ensureMacro("play"));
 
@@ -2168,23 +2175,23 @@ async function installKit() {
   const macros = [macro, playMacro].filter(m => m).length;
   const complete = decks.length === 4 && journals === 2 && !!scene && macros === 2;
   await game.settings.set(MODULE_ID, "installed", complete);
-  if (complete) ui.notifications.info("Quiet Year — Cobalt Reach kit is ready.");
+  if (complete) ui.notifications.info("Quiet Year kit is ready.");
   // Every piece is counted, or a failed scene reads as a warning that nothing
   // is wrong.
   else ui.notifications.warn(`Quiet Year: the world is not fully set up (${decks.length}/4 decks, ${journals}/2 journals, ${scene ? 1 : 0}/1 scene, ${macros}/2 macros). Run the repair macro after correcting any errors.`);
 
   const content = `
-  <div class="quiet-year-cobalt-dialog">
+  <div class="quiet-year-dialog">
     <p><strong>Installed into this world:</strong></p>
     <ul>
       <li>${decks.length}/4 seasonal card decks (${decks.reduce((n,d) => n + d.cards.size, 0)} cards)</li>
       <li>${journals}/2 reference journals (rules: ${rules.status}, setup: ${setup.status})</li>
-      <li>${scene ? 1 : 0}/1 blank gridless Cobalt Reach scene</li>
+      <li>${scene ? 1 : 0}/1 blank gridless map scene</li>
       <li>${macros}/2 macros (repair/setup + play surface)</li>
     </ul>
     <p>You can disable the module after setup; the created world documents will remain.</p>
   </div>`;
-  foundry.applications.api.DialogV2.prompt({ window: { title: "Quiet Year — Cobalt Reach" }, content, ok: { label: "Good" } })
+  foundry.applications.api.DialogV2.prompt({ window: { title: "Quiet Year Kit" }, content, ok: { label: "Good" } })
     .catch(err => console.error(`${MODULE_ID} |`, err));
   return {decks, rules: rules.journal, setup: setup.journal, scene, macro, playMacro};
 }
@@ -2219,7 +2226,7 @@ Hooks.once("init", () => {
 });
 
 Hooks.once("ready", async () => {
-  window.QuietYearCobalt = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, undoLast, adjustProjectWeeks, renameProject, recordAction, adjustContempt, renameContemptRow,
+  window.QuietYear = { installKit, openPlaySurface, drawWeek, tickProjects, setProjectStatus, resetYear, undoLast, adjustProjectWeeks, renameProject, recordAction, adjustContempt, renameContemptRow,
     addResource, renameResource, removeResource, SEASONS, app: null };
   registerRealtimeHooks();
   if (!game.user.isGM) return;
@@ -2244,6 +2251,7 @@ Hooks.once("ready", async () => {
   }
   await migrateWeekNumber();
   await migrateContemptIds();
+  await migrateMacroCommands();
   if (game.settings.get(MODULE_ID, "installed")) return;
 
   // Awaited rather than run from a button callback: a V1 callback neither
@@ -2251,8 +2259,8 @@ Hooks.once("ready", async () => {
   // every step reached the GM as nothing at all. The promise DialogV2.wait
   // returns puts the failure back on screen.
   const choice = await foundry.applications.api.DialogV2.wait({
-    window: { title: "Install Quiet Year — Cobalt Reach?" },
-    content: `<p>This module can add the four seasonal decks, reference journals, a blank Cobalt Reach drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter your world's actors, items, or system data.</p>`,
+    window: { title: "Install the Quiet Year Kit?" },
+    content: `<p>This module can add the four seasonal decks, reference journals, a blank drawing scene, and a repair macro directly to this existing world.</p><p>It does not alter your world's actors, items, or system data.</p>`,
     buttons: [
       { action: "install", label: "Install Kit", default: true },
       { action: "later", label: "Later" }

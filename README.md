@@ -9,7 +9,7 @@ There is no manifest URL — this is a manual install.
 1. **Copy the `quiet-year` folder** into your Foundry user-data `Data/modules/` directory, so that the module's `module.json` sits at `Data/modules/quiet-year/module.json`. The folder must keep that name; Foundry refuses to load a package whose id does not match its directory.
 2. **Restart Foundry.**
 3. **Install socketlib first**, from Foundry's module browser on the setup screen. This kit requires it and declares the dependency, but without a manifest URL Foundry cannot offer to fetch it for you — it will simply refuse to enable the kit until socketlib is present. socketlib is what lets a player take and discard Contempt: world settings are GM-write-only, so a player's click is relayed to a GM client.
-4. **Enable both modules.** Launch the world you want to run the kit in, then under **Manage Modules** enable **Quiet Year — Cobalt Reach Kit** and **socketlib**.
+4. **Enable both modules.** Launch the world you want to run the kit in, then under **Manage Modules** enable **Quiet Year Kit** and **socketlib**.
 5. **As GM, accept the one-time prompt** to install the kit into the world. If you dismiss it, run the macro **Quiet Year: Install / Repair Kit** instead — the two do the same thing, and the macro is also the repair path if anything goes missing later.
 6. **Supply the game text in `content/`**, transcribed from your own copy — five files inside `Data/modules/quiet-year/content/`, in the format documented in [`content/README.md`](content/README.md). You can skip this and come back to it: the kit installs and runs without it, and re-running the **Quiet Year: Install / Repair Kit** macro afterwards picks up what you have added.
 
@@ -26,8 +26,8 @@ When enabled, the GM can install the kit into the current world. It creates:
 - **Quiet Year — Autumn** card deck (Clubs)
 - **Quiet Year — Winter** card deck (Spades)
 - **Quiet Year — Rules & Turn Summary** journal
-- **Cobalt Reach — Quiet Year Setup** journal
-- **Quiet Year — Cobalt Reach** blank gridless collaborative Scene
+- **Quiet Year — Setup** journal
+- **Quiet Year — Map** blank gridless collaborative Scene
 - **Quiet Year: Install / Repair Kit** macro
 - **Quiet Year: Open Play Surface** macro
 
@@ -73,14 +73,10 @@ The original game separates the deck by season and shuffles each suit separately
 
 The kit intentionally leaves map drawing to Foundry's native Drawing tools. That keeps the module system-agnostic and avoids interfering with whatever system your world runs.
 
-## Two-player / sector-scale note
-
-The rules support two players. For Cobalt Reach, the setup journal includes the optional house tweak discussed for sector-scale play: each player may nominate two strategically important resources, then choose one total Abundance and treat the other three as Scarcities.
-
 ## Caveats
 
 - This is a personal-use helper, not an official or distributable Quiet Year product.
-- The game's text is not distributed with this module. `content/` is gitignored, so a clone carries none of it, and the owner supplies their own transcription. The *Cobalt Reach — Quiet Year Setup* journal is original writing about sector-scale play and does live in the source.
+- The game's text is not distributed with this module. `content/` is gitignored, so a clone carries none of it, and the owner supplies their own transcription. The *Quiet Year — Setup* journal is original writing and does live in the source.
 - A deck that already exists is never rewritten by a repair run, because its cards carry which have been drawn — the record of the year so far. To pick up new or corrected text for a season already installed, delete that deck and repair. Corrected `rules.html` needs only the repair run.
 - The kit creates world documents rather than shipping binary LevelDB compendium packs. This makes it much easier to add directly to a world that is already running. A later version can package the same source documents into true module compendia using Foundry's official CLI.
 
@@ -129,7 +125,7 @@ This is an unofficial, AI-assisted personal-use helper. It is not affiliated wit
 - Re-running the installer now repairs the kit's journals as well as its decks, scene and macros. A page you have written in is left alone; a page that has gone is put back.
 
 ### 0.2.1
-- The floating play surface window is now titled simply **The Quiet Year**, making the interface reusable in non-Cobalt Reach worlds.
+- The floating play surface window is now titled simply **The Quiet Year**, making the interface reusable in any world.
 
 ### 0.1.1
 - Fix Foundry v14 Card validation: card `value` is now numeric (Ace=1, Jack=11, Queen=12, King=13).
